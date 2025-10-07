@@ -764,11 +764,6 @@ impl ServiceRegistry {
         result
     }
 
-    /// Get a reference to local services without cloning
-    pub async fn get_local_services_ref(&self) -> &DashMap<TopicPath, Arc<ServiceEntry>> {
-        &self.local_services_list
-    }
-
     pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<TopicPath> {
         log_debug!(
             self.logger,
@@ -987,7 +982,7 @@ impl ServiceRegistry {
     }
 
     async fn get_service_metadata(&self, topic_path: &TopicPath) -> Option<ServiceMetadata> {
-        // Find service in the local services trie
+        // First, try to find service in the local services trie
         let services = self.local_services.read().await;
         let matches = services.find_matches(topic_path);
 
@@ -1012,6 +1007,30 @@ impl ServiceRegistry {
                 actions,
                 registration_time: service_entry.registration_time,
                 last_start_time: service_entry.last_start_time,
+            });
+        }
+
+        // If not found in local services, try remote services
+        let remote_services = self.remote_services.read().await;
+        let remote_matches = remote_services.find_matches(topic_path);
+
+        if !remote_matches.is_empty() {
+            let remote_service = &remote_matches[0].content;
+            let network_id_string = topic_path.network_id();
+
+            // Get actions directly from the RemoteService instance
+            let actions = remote_service.get_actions_metadata();
+
+            // Create metadata using individual getter methods
+            return Some(ServiceMetadata {
+                network_id: network_id_string,
+                service_path: remote_service.path().to_string(),
+                name: remote_service.name().to_string(),
+                version: remote_service.version().to_string(),
+                description: remote_service.description().to_string(),
+                actions,
+                registration_time: 0, // Remote services don't have registration time
+                last_start_time: None, // Remote services don't have start time
             });
         }
 
@@ -1049,16 +1068,16 @@ impl ServiceRegistry {
 
     /// Get metadata for all services with an option to filter internal services
     ///
-    /// INTENTION: Retrieve metadata for all registered services with the option
+    /// INTENTION: Retrieve metadata for all registered services (both local and remote) with the option
     /// to exclude internal services (those with paths starting with $)
     pub async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
-        let mut result = HashMap::with_capacity(self.local_services_list.len());
-        let local_services = self.get_local_services().await;
+        let mut result = HashMap::new();
 
-        // Iterate through all services
+        // Get local services
+        let local_services = self.get_local_services().await;
         for (_, service_entry) in local_services {
             let service = &service_entry.service;
             let path_str = service.path();
@@ -1083,21 +1102,11 @@ impl ServiceRegistry {
             result.insert(path_str.to_string(), service_metadata);
         }
 
-        Ok(result)
-    }
-
-    /// Optimized version that uses references to avoid cloning
-    pub async fn get_all_service_metadata_ref(
-        &self,
-        include_internal_services: bool,
-    ) -> Result<HashMap<String, ServiceMetadata>> {
-        let mut result = HashMap::new();
-
-        // Iterate through all services using DashMap iter pattern
-        for entry in self.local_services_list.iter() {
-            let service_entry = entry.value();
-            let service = &service_entry.service;
-            let path_str = service.path();
+        // Get remote services
+        let remote_services_guard = self.remote_services.read().await;
+        let all_remote_services = remote_services_guard.get_all_values();
+        for remote_service in all_remote_services {
+            let path_str = remote_service.path();
 
             // Skip internal services if not included
             if !include_internal_services && is_internal_service(path_str) {
@@ -1107,7 +1116,7 @@ impl ServiceRegistry {
             let search_path = format!("{path_str}/*");
             let search_topic = TopicPath::new(
                 &search_path,
-                &service_entry.service_topic.network_id().to_string(),
+                &remote_service.service_topic.network_id().to_string(),
             )
             .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
             let service_metadata = self

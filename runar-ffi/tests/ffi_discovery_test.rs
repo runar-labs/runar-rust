@@ -4,18 +4,26 @@
 //! These tests are equivalent to the multicast_discovery_test.rs but use FFI APIs.
 
 use runar_ffi::*;
+use runar_logging::{log_debug, log_error, log_info, log_trace, Component, Logger};
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::Arc;
 use std::time::Duration;
 
 // Import common utilities
 mod common;
 use common::*;
 
+/// Create a test logger for FFI discovery tests
+fn create_test_logger() -> Arc<Logger> {
+    Arc::new(Logger::new_root(Component::Custom("ffi_discovery_test")))
+}
+
 /// Test discovery TTL, lost events, and debouncing through FFI
 #[test]
 fn test_ffi_discovery_ttl_lost_and_debounce() {
-    println!("🔍 Starting FFI Discovery TTL and Debounce Test");
+    let logger = create_test_logger();
+    log_info!(logger, "🔍 Starting FFI Discovery TTL and Debounce Test");
 
     // Create two keys handles for two nodes
     let keys_a = create_keys_handle();
@@ -29,20 +37,6 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
 
     // Generate keys for both nodes
     let mut error = create_test_error();
-    let mut csr_a: *mut u8 = ptr::null_mut();
-    let mut csr_len_a: usize = 0;
-    let mut csr_b: *mut u8 = ptr::null_mut();
-    let mut csr_len_b: usize = 0;
-
-    // Generate CSRs for both nodes
-    assert_eq!(
-        rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error),
-        0
-    );
-    assert_eq!(
-        rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error),
-        0
-    );
 
     // Create discovery options with short TTL for testing
     let discovery_options = create_discovery_options_cbor(
@@ -59,8 +53,10 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
     let public_key_b = unsafe { get_node_public_key(keys_b) };
 
     // Create peer info for both nodes
-    let peer_info_a = create_peer_info_cbor(public_key_a, vec!["127.0.0.1:8080".to_string()]);
-    let peer_info_b = create_peer_info_cbor(public_key_b, vec!["127.0.0.1:8081".to_string()]);
+    let peer_info_a =
+        create_peer_info_cbor(public_key_a.clone(), vec!["127.0.0.1:8080".to_string()]);
+    let peer_info_b =
+        create_peer_info_cbor(public_key_b.clone(), vec!["127.0.0.1:8081".to_string()]);
 
     // Create discovery instances for both nodes
     let mut discovery_a: *mut c_void = ptr::null_mut();
@@ -149,21 +145,16 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
         rn_discovery_free(discovery_b);
         rn_keys_free(keys_a);
         rn_keys_free(keys_b);
-        if !csr_a.is_null() {
-            rn_free(csr_a, csr_len_a);
-        }
-        if !csr_b.is_null() {
-            rn_free(csr_b, csr_len_b);
-        }
     }
 
-    println!("✅ FFI Discovery TTL and Debounce Test completed");
+    log_info!(logger, "✅ FFI Discovery TTL and Debounce Test completed");
 }
 
 /// Test discovery event polling through FFI with new architecture
 #[test]
 fn test_ffi_discovery_event_polling() {
-    println!("🔍 Starting FFI Discovery Event Polling Test");
+    let logger = create_test_logger();
+    log_info!(logger, "🔍 Starting FFI Discovery Event Polling Test");
 
     // Create two keys handles for two nodes
     let keys_a = create_keys_handle();
@@ -177,20 +168,6 @@ fn test_ffi_discovery_event_polling() {
 
     // Generate keys for both nodes
     let mut error = create_test_error();
-    let mut csr_a: *mut u8 = ptr::null_mut();
-    let mut csr_len_a: usize = 0;
-    let mut csr_b: *mut u8 = ptr::null_mut();
-    let mut csr_len_b: usize = 0;
-
-    // Generate CSRs for both nodes
-    assert_eq!(
-        rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error),
-        0
-    );
-    assert_eq!(
-        rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error),
-        0
-    );
 
     // Create discovery options with short intervals for testing
     let discovery_options = create_discovery_options_cbor(
@@ -207,8 +184,10 @@ fn test_ffi_discovery_event_polling() {
     let public_key_b = unsafe { get_node_public_key(keys_b) };
 
     // Create peer info for both nodes
-    let peer_info_a = create_peer_info_cbor(public_key_a, vec!["127.0.0.1:8080".to_string()]);
-    let peer_info_b = create_peer_info_cbor(public_key_b, vec!["127.0.0.1:8081".to_string()]);
+    let peer_info_a =
+        create_peer_info_cbor(public_key_a.clone(), vec!["127.0.0.1:8080".to_string()]);
+    let peer_info_b =
+        create_peer_info_cbor(public_key_b.clone(), vec!["127.0.0.1:8081".to_string()]);
 
     // Create discovery instances
     let mut discovery_a: *mut c_void = ptr::null_mut();
@@ -293,9 +272,12 @@ fn test_ffi_discovery_event_polling() {
     let mut discovered_events = 0;
     let mut updated_events = 0;
     let mut lost_events = 0;
+    let mut node_a_discovered = false;
+    let mut node_b_self_discovered = false;
+    let mut wrong_addresses = false;
 
     // Poll for discovered events
-    for _ in 0..10 {
+    for i in 0..10 {
         let mut ev_ptr: *mut u8 = ptr::null_mut();
         let mut ev_len: usize = 0;
         let rc = unsafe {
@@ -307,7 +289,51 @@ fn test_ffi_discovery_event_polling() {
             let peer_data = unsafe { std::slice::from_raw_parts(ev_ptr, ev_len) };
             let peer: runar_transporter::discovery::PeerInfo =
                 serde_cbor::from_slice(peer_data).unwrap();
-            println!("Discovered peer: {peer:?}");
+            log_debug!(
+                logger,
+                "Poll {}: Node B discovered peer with addresses: {:?}",
+                i + 1,
+                peer.addresses
+            );
+            log_trace!(logger, "  Public key: {:02x?}", peer.public_key);
+
+            // Check if this is Node A's public key
+            if peer.public_key == public_key_a {
+                log_debug!(
+                    logger,
+                    "  ✅ This is Node A's public key - correct discovery!"
+                );
+                if peer.addresses.contains(&"127.0.0.1:8080".to_string()) {
+                    log_debug!(logger, "  ✅ Node A's address is correct: 127.0.0.1:8080");
+                    node_a_discovered = true;
+                } else {
+                    log_error!(
+                        logger,
+                        "  ❌ BUG: Node A's address is wrong: {:?}",
+                        peer.addresses
+                    );
+                    wrong_addresses = true;
+                }
+            } else if peer.public_key == public_key_b {
+                log_error!(
+                    logger,
+                    "  ❌ BUG: Node B discovered itself! This should not happen!"
+                );
+                if peer.addresses.contains(&"127.0.0.1:8081".to_string()) {
+                    log_error!(
+                        logger,
+                        "  ❌ BUG: Node B sees its own address: 127.0.0.1:8081"
+                    );
+                    node_b_self_discovered = true;
+                }
+            } else {
+                log_debug!(
+                    logger,
+                    "  ❓ Unknown peer with public key: {:02x?}",
+                    peer.public_key
+                );
+            }
+
             discovered_events += 1;
             rn_free(ev_ptr, ev_len);
         }
@@ -322,7 +348,7 @@ fn test_ffi_discovery_event_polling() {
             let peer_data = unsafe { std::slice::from_raw_parts(ev_ptr, ev_len) };
             let peer: runar_transporter::discovery::PeerInfo =
                 serde_cbor::from_slice(peer_data).unwrap();
-            println!("Updated peer: {peer:?}");
+            log_debug!(logger, "Updated peer: {peer:?}");
             updated_events += 1;
             rn_free(ev_ptr, ev_len);
         }
@@ -336,7 +362,7 @@ fn test_ffi_discovery_event_polling() {
         if !ev_ptr.is_null() && ev_len > 0 {
             let node_id_data = unsafe { std::slice::from_raw_parts(ev_ptr, ev_len) };
             let node_id: String = serde_cbor::from_slice(node_id_data).unwrap();
-            println!("Lost peer: {node_id}");
+            log_debug!(logger, "Lost peer: {node_id}");
             lost_events += 1;
             rn_free(ev_ptr, ev_len);
         }
@@ -363,21 +389,40 @@ fn test_ffi_discovery_event_polling() {
         if !ev_ptr.is_null() && ev_len > 0 {
             let node_id_data = unsafe { std::slice::from_raw_parts(ev_ptr, ev_len) };
             let node_id: String = serde_cbor::from_slice(node_id_data).unwrap();
-            println!("Lost peer after TTL: {node_id}");
+            log_debug!(logger, "Lost peer after TTL: {node_id}");
             lost_events += 1;
             rn_free(ev_ptr, ev_len);
         }
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    println!(
-        "Discovery events - Discovered: {discovered_events}, Updated: {updated_events}, Lost: {lost_events}"
+    log_debug!(logger, "\n=== TEST RESULTS ===");
+    log_debug!(logger, "Total discovered events: {discovered_events}");
+    log_debug!(logger, "Total updated events: {updated_events}");
+    log_debug!(logger, "Total lost events: {lost_events}");
+    log_debug!(logger, "Node A discovered correctly: {node_a_discovered}");
+    log_debug!(
+        logger,
+        "Node B self-discovered (BUG): {node_b_self_discovered}"
     );
+    log_debug!(logger, "Wrong addresses detected (BUG): {wrong_addresses}");
 
-    // We should have seen at least one discovered event
+    // CRITICAL ASSERTIONS - These will fail if the bug exists
     assert!(
         discovered_events > 0,
         "Should have discovered at least one peer"
+    );
+    assert!(
+        node_a_discovered,
+        "Node B should have discovered Node A with correct address (127.0.0.1:8080)"
+    );
+    assert!(
+        !node_b_self_discovered,
+        "Node B should NOT have discovered itself - this indicates the address mixing bug"
+    );
+    assert!(
+        !wrong_addresses,
+        "Node B should NOT have received wrong addresses - this indicates the address mixing bug"
     );
 
     // Cleanup
@@ -388,21 +433,19 @@ fn test_ffi_discovery_event_polling() {
         rn_discovery_free(discovery_b);
         rn_keys_free(keys_a);
         rn_keys_free(keys_b);
-        if !csr_a.is_null() {
-            rn_free(csr_a, csr_len_a);
-        }
-        if !csr_b.is_null() {
-            rn_free(csr_b, csr_len_b);
-        }
     }
 
-    println!("✅ FFI Discovery Event Polling Test completed");
+    log_debug!(logger, "✅ FFI Discovery Event Polling Test completed");
 }
 
 /// Test discovery announce and discover functionality through FFI
 #[test]
 fn test_ffi_multicast_announce_and_discover() {
-    println!("🔍 Starting FFI Multicast Announce and Discover Test");
+    let logger = create_test_logger();
+    log_info!(
+        logger,
+        "🔍 Starting FFI Multicast Announce and Discover Test"
+    );
 
     // Create two keys handles for two nodes
     let keys_a = create_keys_handle();
@@ -416,20 +459,6 @@ fn test_ffi_multicast_announce_and_discover() {
 
     // Generate keys for both nodes
     let mut error = create_test_error();
-    let mut csr_a: *mut u8 = ptr::null_mut();
-    let mut csr_len_a: usize = 0;
-    let mut csr_b: *mut u8 = ptr::null_mut();
-    let mut csr_len_b: usize = 0;
-
-    // Generate CSRs for both nodes
-    assert_eq!(
-        rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error),
-        0
-    );
-    assert_eq!(
-        rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error),
-        0
-    );
 
     // Create discovery options
     let discovery_options = create_discovery_options_cbor(
@@ -446,8 +475,10 @@ fn test_ffi_multicast_announce_and_discover() {
     let public_key_b = unsafe { get_node_public_key(keys_b) };
 
     // Create peer info for both nodes
-    let peer_info_a = create_peer_info_cbor(public_key_a, vec!["127.0.0.1:8080".to_string()]);
-    let peer_info_b = create_peer_info_cbor(public_key_b, vec!["127.0.0.1:8081".to_string()]);
+    let peer_info_a =
+        create_peer_info_cbor(public_key_a.clone(), vec!["127.0.0.1:8080".to_string()]);
+    let peer_info_b =
+        create_peer_info_cbor(public_key_b.clone(), vec!["127.0.0.1:8081".to_string()]);
 
     // Create discovery instances for both nodes
     let mut discovery_a: *mut c_void = ptr::null_mut();
@@ -506,6 +537,16 @@ fn test_ffi_multicast_announce_and_discover() {
         0
     );
 
+    // Bind discovery events to their own channels
+    assert_eq!(
+        unsafe { rn_discovery_bind_events(discovery_a, &mut error) },
+        0
+    );
+    assert_eq!(
+        unsafe { rn_discovery_bind_events(discovery_b, &mut error) },
+        0
+    );
+
     // Start announcing on both nodes
     assert_eq!(
         unsafe { rn_discovery_start_announcing(discovery_a, &mut error) },
@@ -519,6 +560,105 @@ fn test_ffi_multicast_announce_and_discover() {
     // Wait for discovery to work
     std::thread::sleep(Duration::from_millis(1000));
 
+    // Test discovery event polling on node B (should discover node A)
+    log_debug!(logger, "🔍 Polling Node B for discovered peers...");
+    let mut discovered_events = 0;
+    let mut node_a_discovered = false;
+    let mut node_b_self_discovered = false;
+    let mut wrong_addresses = false;
+
+    // Poll for discovered events
+    for i in 0..5 {
+        let mut ev_ptr: *mut u8 = ptr::null_mut();
+        let mut ev_len: usize = 0;
+        let rc = unsafe {
+            rn_discovery_poll_discovered(discovery_b, &mut ev_ptr, &mut ev_len, &mut error)
+        };
+        assert_eq!(rc, 0);
+        if !ev_ptr.is_null() && ev_len > 0 {
+            // Deserialize the PeerInfo
+            let peer_data = unsafe { std::slice::from_raw_parts(ev_ptr, ev_len) };
+            let peer: runar_transporter::discovery::PeerInfo =
+                serde_cbor::from_slice(peer_data).unwrap();
+            log_debug!(
+                logger,
+                "Poll {}: Node B discovered peer with addresses: {:?}",
+                i + 1,
+                peer.addresses
+            );
+            log_trace!(logger, "  Public key: {:02x?}", peer.public_key);
+
+            // Check if this is Node A's public key
+            if peer.public_key == public_key_a {
+                log_debug!(
+                    logger,
+                    "  ✅ This is Node A's public key - correct discovery!"
+                );
+                if peer.addresses.contains(&"127.0.0.1:8080".to_string()) {
+                    log_debug!(logger, "  ✅ Node A's address is correct: 127.0.0.1:8080");
+                    node_a_discovered = true;
+                } else {
+                    log_error!(
+                        logger,
+                        "  ❌ BUG: Node A's address is wrong: {:?}",
+                        peer.addresses
+                    );
+                    wrong_addresses = true;
+                }
+            } else if peer.public_key == public_key_b {
+                log_error!(
+                    logger,
+                    "  ❌ BUG: Node B discovered itself! This should not happen!"
+                );
+                if peer.addresses.contains(&"127.0.0.1:8081".to_string()) {
+                    log_error!(
+                        logger,
+                        "  ❌ BUG: Node B sees its own address: 127.0.0.1:8081"
+                    );
+                    node_b_self_discovered = true;
+                }
+            } else {
+                log_debug!(
+                    logger,
+                    "  ❓ Unknown peer with public key: {:02x?}",
+                    peer.public_key
+                );
+            }
+
+            discovered_events += 1;
+            rn_free(ev_ptr, ev_len);
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    log_debug!(logger, "\n=== TEST RESULTS ===");
+    log_debug!(logger, "Total discovered events: {discovered_events}");
+    log_debug!(logger, "Node A discovered correctly: {node_a_discovered}");
+    log_debug!(
+        logger,
+        "Node B self-discovered (BUG): {node_b_self_discovered}"
+    );
+    log_debug!(logger, "Wrong addresses detected (BUG): {wrong_addresses}");
+
+    // CRITICAL ASSERTIONS - These will fail if the bug exists
+    assert!(
+        discovered_events > 0,
+        "Should have discovered at least one peer"
+    );
+    assert!(
+        node_a_discovered,
+        "Node B should have discovered Node A with correct address (127.0.0.1:8080)"
+    );
+    assert!(
+        !node_b_self_discovered,
+        "Node B should NOT have discovered itself - this indicates the address mixing bug"
+    );
+    assert!(
+        !wrong_addresses,
+        "Node B should NOT have received wrong addresses - this indicates the address mixing bug"
+    );
+
     // Cleanup
     unsafe {
         rn_discovery_shutdown(discovery_a, &mut error);
@@ -527,21 +667,22 @@ fn test_ffi_multicast_announce_and_discover() {
         rn_discovery_free(discovery_b);
         rn_keys_free(keys_a);
         rn_keys_free(keys_b);
-        if !csr_a.is_null() {
-            rn_free(csr_a, csr_len_a);
-        }
-        if !csr_b.is_null() {
-            rn_free(csr_b, csr_len_b);
-        }
     }
 
-    println!("✅ FFI Multicast Announce and Discover Test completed");
+    log_debug!(
+        logger,
+        "✅ FFI Multicast Announce and Discover Test completed"
+    );
 }
 
 /// Test discovery start/stop idempotence through FFI
 #[test]
 fn test_ffi_discovery_start_stop_idempotence() {
-    println!("🔍 Starting FFI Discovery Start/Stop Idempotence Test");
+    let logger = create_test_logger();
+    log_info!(
+        logger,
+        "🔍 Starting FFI Discovery Start/Stop Idempotence Test"
+    );
 
     // Create keys handle
     let keys = create_keys_handle();
@@ -551,13 +692,6 @@ fn test_ffi_discovery_start_stop_idempotence() {
 
     // Generate keys
     let mut error = create_test_error();
-    let mut csr: *mut u8 = ptr::null_mut();
-    let mut csr_len: usize = 0;
-
-    assert_eq!(
-        rn_keys_node_generate_csr(keys, &mut csr, &mut csr_len, &mut error),
-        0
-    );
 
     // Create discovery options
     let discovery_options = create_discovery_options_cbor(
@@ -630,18 +764,22 @@ fn test_ffi_discovery_start_stop_idempotence() {
         rn_discovery_shutdown(discovery, &mut error);
         rn_discovery_free(discovery);
         rn_keys_free(keys);
-        if !csr.is_null() {
-            rn_free(csr, csr_len);
-        }
     }
 
-    println!("✅ FFI Discovery Start/Stop Idempotence Test completed");
+    log_debug!(
+        logger,
+        "✅ FFI Discovery Start/Stop Idempotence Test completed"
+    );
 }
 
 /// Test discovery with invalid CBOR data through FFI
 #[test]
 fn test_ffi_discovery_invalid_cbor_handling() {
-    println!("🔍 Starting FFI Discovery Invalid CBOR Handling Test");
+    let logger = create_test_logger();
+    log_info!(
+        logger,
+        "🔍 Starting FFI Discovery Invalid CBOR Handling Test"
+    );
 
     // Create keys handle
     let keys = create_keys_handle();
@@ -651,13 +789,6 @@ fn test_ffi_discovery_invalid_cbor_handling() {
 
     // Generate keys
     let mut error = create_test_error();
-    let mut csr: *mut u8 = ptr::null_mut();
-    let mut csr_len: usize = 0;
-
-    assert_eq!(
-        rn_keys_node_generate_csr(keys, &mut csr, &mut csr_len, &mut error),
-        0
-    );
 
     // Get public key for the node
     let public_key = unsafe { get_node_public_key(keys) };
@@ -690,9 +821,9 @@ fn test_ffi_discovery_invalid_cbor_handling() {
         rn_discovery_free(discovery);
     }
     rn_keys_free(keys);
-    if !csr.is_null() {
-        rn_free(csr, csr_len);
-    }
 
-    println!("✅ FFI Discovery Invalid CBOR Handling Test completed");
+    log_debug!(
+        logger,
+        "✅ FFI Discovery Invalid CBOR Handling Test completed"
+    );
 }

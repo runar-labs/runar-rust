@@ -328,6 +328,17 @@ impl RemoteService {
             .collect()
     }
 
+    /// Get all action metadata for this remote service
+    ///
+    /// INTENTION: Provide a way to get the full action metadata for service discovery
+    /// and introspection purposes.
+    pub fn get_actions_metadata(&self) -> Vec<ActionMetadata> {
+        self.actions
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
     /// Initialize the remote service and register its handlers
     ///
     /// INTENTION: Handle service initialization and register all available
