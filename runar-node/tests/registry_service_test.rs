@@ -42,9 +42,20 @@ async fn test_registry_service_list_services() {
         node.start().await.unwrap();
         node.wait_for_services_to_start().await.unwrap();
 
-        // Use the request method to query the registry service
+        // Use the request method to query the registry service (include all services for testing)
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        let params = ArcValue::new_map(params_map);
+
         let services_av: ArcValue = node
-            .request("$registry/services/list", Option::<ArcValue>::None, None)
+            .request("$registry/services/list", Some(params), None)
             .await
             .unwrap();
         // Convert ArcValue list into Vec<ServiceMetadata>
@@ -129,9 +140,20 @@ async fn test_registry_service_get_service_info() {
         // let states_after = node.get_all_service_states().await;
         // test_logger.debug(format!("Service states AFTER start: {:?}", states_after));
 
-        // Debug log available handlers using logger
+        // Debug log available handlers using logger (include all services for testing)
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        let params = ArcValue::new_map(params_map);
+
         let list_av: ArcValue = node
-            .request("$registry/services/list", None::<ArcValue>, None)
+            .request("$registry/services/list", Some(params), None)
             .await
             .unwrap();
         let list_av_clone = list_av.clone();
@@ -924,8 +946,20 @@ async fn test_registry_service_remote_discovery() {
         // ==========================================
         logger.debug("🧪 Testing Node1 registry - should see both local and remote services");
 
+        // Include all services (local and remote) for the remote discovery test
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        let params = ArcValue::new_map(params_map);
+
         let services_av: ArcValue = node1
-            .request("$registry/services/list", Option::<ArcValue>::None, None)
+            .request("$registry/services/list", Some(params), None)
             .await
             .unwrap();
 
@@ -981,8 +1015,20 @@ async fn test_registry_service_remote_discovery() {
         // ==========================================
         logger.debug("🧪 Testing Node2 registry - should see both local and remote services");
 
+        // Include all services (local and remote) for the remote discovery test
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        let params = ArcValue::new_map(params_map);
+
         let services_av: ArcValue = node2
-            .request("$registry/services/list", Option::<ArcValue>::None, None)
+            .request("$registry/services/list", Some(params), None)
             .await
             .unwrap();
 
@@ -1031,9 +1077,20 @@ async fn test_registry_service_remote_discovery() {
         logger.debug("🧪 Testing remote service information retrieval");
 
         // Node1 should be able to get detailed info about Node2's math2 service
-        // Get the services list again for this test section
+        // Get the services list again for this test section (include all services)
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        let params = ArcValue::new_map(params_map);
+
         let services_av: ArcValue = node1
-            .request("$registry/services/list", Option::<ArcValue>::None, None)
+            .request("$registry/services/list", Some(params), None)
             .await
             .unwrap();
 
@@ -1067,9 +1124,20 @@ async fn test_registry_service_remote_discovery() {
         logger.debug("✅ Remote service information retrieval successful");
 
         // Node2 should be able to get detailed info about Node1's math1 service
-        // Get the services list again for this test section
+        // Get the services list again for this test section (include all services)
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(true),
+        );
+        let params = ArcValue::new_map(params_map);
+
         let services_av: ArcValue = node2
-            .request("$registry/services/list", Option::<ArcValue>::None, None)
+            .request("$registry/services/list", Some(params), None)
             .await
             .unwrap();
 

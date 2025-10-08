@@ -201,9 +201,20 @@ async fn test_node_event_metadata_registration() -> Result<()> {
     node.add_service(service).await?;
     node.start().await?; // This will call init() on MathService
 
-    // Request the list of services from the registry
+    // Request the list of services from the registry (include all services for testing)
+    let mut params_map = std::collections::HashMap::new();
+    params_map.insert(
+        "include_internal_services".to_string(),
+        ArcValue::new_primitive(true),
+    );
+    params_map.insert(
+        "include_remote_services".to_string(),
+        ArcValue::new_primitive(true),
+    );
+    let params = ArcValue::new_map(params_map);
+
     let list_arc = node
-        .request("$registry/services/list", None::<ArcValue>, None)
+        .request("$registry/services/list", Some(params), None)
         .await?
         .as_typed_list_ref::<ServiceMetadata>()?;
 

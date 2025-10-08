@@ -256,8 +256,20 @@ impl AbstractService for GatwayService {
             name = self.name
         ));
 
+        // Create parameters to exclude internal services and remote services for gateway
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(false),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(false),
+        );
+        let params = ArcValue::new_map(params_map);
+
         match context
-            .request("$registry/services/list", None::<ArcValue>, None)
+            .request("$registry/services/list", Some(params), None)
             .await
         {
             Ok(services_arc_value) => {

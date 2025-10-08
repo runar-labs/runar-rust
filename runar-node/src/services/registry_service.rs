@@ -208,15 +208,39 @@ impl RegistryService {
     /// Handler for listing all services
     async fn handle_list_services(
         &self,
-        _params: ArcValue,
+        params: ArcValue,
         ctx: RequestContext,
     ) -> Result<ArcValue> {
         log_debug!(ctx.logger, "Listing all services");
 
-        // Get all service metadata directly
+        // Extract parameters from the request
+        let include_internal_services = if let Ok(params_map) = params.as_map_ref() {
+            params_map
+                .get("include_internal_services")
+                .and_then(|v| v.as_type_ref::<bool>().ok().map(|b| *b))
+                .unwrap_or(true) // Default to true if not specified
+        } else {
+            true // Default to true if params is not a map
+        };
+
+        let include_remote_services = if let Ok(params_map) = params.as_map_ref() {
+            params_map
+                .get("include_remote_services")
+                .and_then(|v| v.as_type_ref::<bool>().ok().map(|b| *b))
+                .unwrap_or(true) // Default to true if not specified
+        } else {
+            true // Default to true if params is not a map
+        };
+
+        log_debug!(
+            ctx.logger,
+            "include_internal_services={include_internal_services}, include_remote_services={include_remote_services}"
+        );
+
+        // Get all service metadata with the specified flags
         let service_metadata = self
             .registry_delegate
-            .get_all_service_metadata(true)
+            .get_all_service_metadata(include_internal_services, include_remote_services)
             .await?;
 
         // Convert the HashMap of ServiceMetadata to a Vec

@@ -2986,7 +2986,7 @@ impl Node {
     pub async fn collect_local_service_capabilities(&self) -> Result<NodeMetadata> {
         let services_map = self
             .service_registry
-            .get_all_service_metadata(false)
+            .get_all_service_metadata(false, false)
             .await?;
         let services: Vec<ServiceMetadata> = services_map.values().cloned().collect();
         let subscriptions = self.service_registry.get_all_subscriptions(false).await?;
@@ -3424,9 +3424,10 @@ impl RegistryDelegate for Node {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
         self.service_registry
-            .get_all_service_metadata(include_internal_services)
+            .get_all_service_metadata(include_internal_services, include_remote_services)
             .await
     }
 

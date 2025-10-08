@@ -1070,6 +1070,7 @@ impl ServiceRegistry {
     pub async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
         let mut result = HashMap::new();
 
@@ -1099,30 +1100,34 @@ impl ServiceRegistry {
             result.insert(path_str.to_string(), service_metadata);
         }
 
-        // Get remote services
-        let remote_services_guard = self.remote_services.read().await;
-        let all_remote_services = remote_services_guard.get_all_values();
-        for remote_service in all_remote_services {
-            let path_str = remote_service.path();
+        // Get remote services if requested
+        if include_remote_services {
+            let remote_services_guard = self.remote_services.read().await;
+            let all_remote_services = remote_services_guard.get_all_values();
+            for remote_service in all_remote_services {
+                let path_str = remote_service.path();
 
-            // Skip internal services if not included
-            if !include_internal_services && is_internal_service(path_str) {
-                continue;
+                // Skip internal services if not included
+                if !include_internal_services && is_internal_service(path_str) {
+                    continue;
+                }
+
+                let search_path = format!("{path_str}/*");
+                let search_topic = TopicPath::new(
+                    &search_path,
+                    &remote_service.service_topic.network_id().to_string(),
+                )
+                .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
+                let service_metadata =
+                    self.get_service_metadata(&search_topic)
+                        .await
+                        .ok_or_else(|| {
+                            anyhow!("Service metadata not found for topic: {}", search_topic)
+                        })?;
+
+                // Create metadata using individual getter methods from the service
+                result.insert(path_str.to_string(), service_metadata);
             }
-
-            let search_path = format!("{path_str}/*");
-            let search_topic = TopicPath::new(
-                &search_path,
-                &remote_service.service_topic.network_id().to_string(),
-            )
-            .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
-            let service_metadata = self
-                .get_service_metadata(&search_topic)
-                .await
-                .ok_or_else(|| anyhow!("Service metadata not found for topic: {}", search_topic))?;
-
-            // Create metadata using individual getter methods from the service
-            result.insert(path_str.to_string(), service_metadata);
         }
 
         Ok(result)
@@ -1157,8 +1162,9 @@ impl RegistryDelegate for ServiceRegistry {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
-        self.get_all_service_metadata(include_internal_services)
+        self.get_all_service_metadata(include_internal_services, include_remote_services)
             .await
     }
 

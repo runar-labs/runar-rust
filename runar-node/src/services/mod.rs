@@ -849,6 +849,7 @@ pub trait RegistryDelegate: Send + Sync {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>>;
 
     /// Get metadata for all actions under a specific service path
