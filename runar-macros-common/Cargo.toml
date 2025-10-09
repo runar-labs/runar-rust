@@ -17,6 +17,6 @@ rust-version = "1.70"
 runar_logging = { path = "../runar-logging" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_with = "3.9.0"
+serde_with = "3.15.0"
 serde_bytes = "0.11"
 serde_cbor = "0.11" 

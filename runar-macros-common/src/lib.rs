@@ -128,7 +128,6 @@ macro_rules! params {
 pub mod cbor_bytes {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_bytes::ByteBuf;
-    use serde_with::As;
 
     /// Serialize Vec<Vec<u8>> as an array of CBOR byte strings
     ///
@@ -167,28 +166,10 @@ pub mod cbor_bytes {
             Ok(byte_bufs.into_iter().map(|b| b.into_vec()).collect())
         }
     }
-
-    /// Alternative approach using serde_with for more ergonomic usage
-    ///
-    /// # Usage
-    ///
-    /// ```rust
-    /// use serde::{Deserialize, Serialize};
-    /// use serde_with::serde_as;
-    /// use runar_macros_common::cbor_bytes::VecVecBytesAs;
-    ///
-    /// #[serde_as]
-    /// #[derive(Serialize, Deserialize)]
-    /// struct MyStruct {
-    ///     #[serde_as(as = "VecVecBytesAs")]
-    ///     pub profile_public_keys: Vec<Vec<u8>>,
-    /// }
-    /// ```
-    pub type VecVecBytesAs = As<VecVecBytes>;
 }
 
 /// Re-export commonly used types for convenience
-pub use cbor_bytes::{VecVecBytes, VecVecBytesAs};
+pub use cbor_bytes::VecVecBytes;
 
 #[cfg(test)]
 mod cbor_test;
