@@ -427,17 +427,6 @@ impl MulticastDiscovery {
                 }
 
                 log_debug!(logger, "PeerInfo addresses: {:?}", peer_info.addresses);
-                //TODO REMOVCE THIS AFTER DEBUG IS COMPLETED
-                // Serialize to CBOR to see what's being sent
-                match serde_cbor::to_vec(peer_info) {
-                    Ok(cbor_data) => {
-                        log_debug!(logger, "PeerInfo CBOR length: {}", cbor_data.len());
-                        log_debug!(logger, "PeerInfo CBOR hex: {:02x?}", cbor_data);
-                    }
-                    Err(e) => {
-                        log_error!(logger, "Failed to serialize PeerInfo to CBOR: {}", e);
-                    }
-                }
 
                 // Emit Discovered event to all listeners
                 let listeners_read = listeners.read().await;
