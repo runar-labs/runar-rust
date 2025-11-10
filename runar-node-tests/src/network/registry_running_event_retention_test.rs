@@ -1,5 +1,5 @@
 use anyhow::Result;
-use runar_common::logging::{LogLevel, LoggingConfig};
+use runar_logging::{LogLevel, LoggingConfig};
 use runar_node::{node::Node, DiscoveryOptions};
 use runar_test_utils::create_networked_node_test_config;
 use std::time::Duration;

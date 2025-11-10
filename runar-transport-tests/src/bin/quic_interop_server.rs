@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use log::LevelFilter;
-use runar_macros_common::{log_debug, log_info};
+use runar_logging::{log_debug, log_info};
 use runar_schemas::NodeInfo;
 use runar_transporter::transport::{EventCallback, NetworkTransport, RequestCallback};
 use runar_transporter::transport::{

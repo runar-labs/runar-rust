@@ -8,13 +8,13 @@
 //! 5. Cross-node validation
 
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
 use runar_keys::{
     certificate::X509Certificate,
     error::Result,
     mobile::MobileKeyManager,
     node::{CertificateStatus, NodeKeyManager},
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 
 fn create_test_logger() -> Arc<Logger> {
@@ -61,17 +61,17 @@ async fn test_complete_certificate_workflow() -> Result<()> {
 
     // Create two nodes for demonstration
     let node1_logger = create_test_logger();
-    node1_logger.set_node_id("node1".to_string());
     let node2_logger = create_test_logger();
-    node2_logger.set_node_id("node2".to_string());
 
     let mut node1 = NodeKeyManager::new(node1_logger)?;
+    node1.generate_keys()?;
     let mut node2 = NodeKeyManager::new(node2_logger)?;
+    node2.generate_keys()?;
 
     println!(
         "   ✅ Created nodes: {} and {}",
-        node1.get_node_id(),
-        node2.get_node_id()
+        node1.get_node_id().unwrap_or_else(|| "unknown".to_string()),
+        node2.get_node_id().unwrap_or_else(|| "unknown".to_string())
     );
 
     // Generate CSRs from both nodes
@@ -83,8 +83,8 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     println!("      Node2 status: {:?}", node2.get_certificate_status());
 
     // Verify CSR contents
-    assert_eq!(node1_setup_token.node_id, node1.get_node_id());
-    assert_eq!(node2_setup_token.node_id, node2.get_node_id());
+    assert_eq!(node1_setup_token.node_id, node1.get_node_id().unwrap());
+    assert_eq!(node2_setup_token.node_id, node2.get_node_id().unwrap());
     assert!(!node1_setup_token.csr_der.is_empty());
     assert!(!node2_setup_token.csr_der.is_empty());
 
@@ -115,18 +115,18 @@ async fn test_complete_certificate_workflow() -> Result<()> {
         node1_cert_message.metadata.validity_days
     );
 
-    let safe_node_id_1 = &node1.get_node_id();
-    let safe_node_id_2 = &node2.get_node_id();
+    let safe_node_id_1 = node1.get_node_id().unwrap();
+    let safe_node_id_2 = node2.get_node_id().unwrap();
 
     // Verify certificate contents
     assert!(node1_cert_message
         .node_certificate
         .subject()
-        .contains(safe_node_id_1));
+        .contains(&safe_node_id_1));
     assert!(node2_cert_message
         .node_certificate
         .subject()
-        .contains(safe_node_id_2));
+        .contains(&safe_node_id_2));
     // Note: For this demo, we're creating self-signed certificates, so the CA certificate check is relaxed
     println!("      ✅ Certificate subjects verified correctly");
 
@@ -234,11 +234,11 @@ async fn test_certificate_validation_edge_cases() -> Result<()> {
     println!("🧪 Testing certificate validation edge cases");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let node_logger = create_test_logger();
-    node_logger.set_node_id("node".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let mut node_keys = NodeKeyManager::new(node_logger)?;
+    node_keys.generate_keys()?;
 
     // Use the proper CSR-based certificate workflow
     let setup_token = node_keys.generate_csr()?;
@@ -292,15 +292,15 @@ async fn test_multiple_network_scenario() -> Result<()> {
     println!("🌐 Testing multiple network scenario");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
 
     // Create multiple nodes
     let mut nodes = Vec::new();
-    for i in 1..=3 {
+    for _i in 1..=3 {
         let node_logger = create_test_logger();
-        node_logger.set_node_id(format!("node-{i}"));
         let mut node = NodeKeyManager::new(node_logger)?;
+        node.generate_keys()?;
 
         // Use the proper CSR-based certificate workflow
         let setup_token = node.generate_csr()?;
@@ -367,7 +367,7 @@ async fn test_certificate_performance() -> Result<()> {
     // Measure mobile CA creation
     let ca_start = std::time::Instant::now();
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let ca_duration = ca_start.elapsed();
 
@@ -375,10 +375,10 @@ async fn test_certificate_performance() -> Result<()> {
     let cert_start = std::time::Instant::now();
     const NUM_NODES: usize = 10;
 
-    for i in 1..=NUM_NODES {
+    for _i in 1..=NUM_NODES {
         let node_logger = create_test_logger();
-        node_logger.set_node_id(format!("node-{i}"));
         let mut node = NodeKeyManager::new(node_logger)?;
+        node.generate_keys()?;
 
         // Use the proper CSR-based certificate workflow
         let setup_token = node.generate_csr()?;
@@ -422,12 +422,12 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("🔐 Testing enhanced key management features");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let node_logger = create_test_logger();
-    node_logger.set_node_id("node".to_string());
 
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let mut node = NodeKeyManager::new(node_logger)?;
+    node.generate_keys()?;
 
     // Issue certificate for the enhanced node (required for network key encryption)
     let setup_token = node.generate_csr()?;
@@ -475,7 +475,7 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Phase 4: Node Storage Key
     println!("\n💾 Phase 4: Node Storage Key Management");
-    let storage_key = node.get_storage_key().to_vec(); // Clone to avoid borrow issues
+    let storage_key = node.get_storage_key().unwrap().to_vec(); // Clone to avoid borrow issues
     assert_eq!(storage_key.len(), 32);
     let storage_key_size = storage_key.len();
     println!("   ✅ Node storage key available: {storage_key_size} bytes");
@@ -606,10 +606,11 @@ async fn test_enhanced_key_management() -> Result<()> {
 
 #[test]
 fn test_symmetric_key_management() {
-    let logger = Arc::new(Logger::new_root(runar_common::logging::Component::Custom(
-        "test",
-    )));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     let mut node_manager = NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
+    node_manager
+        .generate_keys()
+        .expect("Failed to generate keys");
 
     // Test symmetric key management
     let key1 = node_manager
@@ -636,11 +637,12 @@ fn test_symmetric_key_management() {
     let node_id = node_manager.get_node_id();
 
     // Verify node ID is derived from public key
+    let node_id = node_id.unwrap();
     assert!(!node_id.is_empty());
     assert_eq!(node_id.len(), 26);
 
     // Test storage key access
-    let storage_key = node_manager.get_storage_key();
+    let storage_key = node_manager.get_storage_key().unwrap();
     assert_eq!(storage_key.len(), 32);
 }
 
@@ -651,12 +653,12 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
     println!("🔒 Testing encryption with network keys + empty profile keys array");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let node_logger = create_test_logger();
-    node_logger.set_node_id("node".to_string());
 
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let mut node = NodeKeyManager::new(node_logger)?;
+    node.generate_keys()?;
 
     // Issue certificate for the node (required for network key encryption)
     let setup_token = node.generate_csr()?;

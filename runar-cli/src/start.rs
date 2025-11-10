@@ -4,17 +4,16 @@
 //! created during the initialization process.
 
 use anyhow::{Context, Result};
-use runar_common::logging::{Component, Logger};
 use runar_keys::node::NodeKeyManager;
-use runar_macros_common::log_info;
+use runar_logging::log_info;
+use runar_logging::{Component, Logger};
 use runar_node::{Node, NodeConfig};
-use serde_cbor::from_slice;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::signal::ctrl_c;
 
 use crate::config::NodeConfig as CliNodeConfig;
-use crate::key_store::OsKeyStore;
+use crate::device_keystore::create_device_keystore_for_platform;
 
 pub struct StartCommand {
     config_dir: PathBuf,
@@ -37,11 +36,11 @@ impl StartCommand {
             config.node_id
         );
 
-        // Load node keys from OS key store
+        // Load node keys using new state management
         let node_key_manager = self.load_node_keys(&config)?;
         log_info!(
             self.logger,
-            "Node keys loaded successfully from OS key store"
+            "Node keys loaded successfully from device keystore"
         );
 
         // Create Runar node configuration using production constructor
@@ -62,7 +61,7 @@ impl StartCommand {
         println!("📋 Node Information:");
         println!("   • Node ID: {}", config.node_id);
         println!("   • Default Network: {}", config.default_network_id);
-        println!("   • Keys Name: {}", config.keys_name);
+        println!("   • Persistence Dir: {:?}", config.persistence_dir);
         println!();
         println!("📱 The node is ready to accept connections from mobile devices");
         println!("🛑 Press Ctrl+C to stop the node");
@@ -83,43 +82,34 @@ impl StartCommand {
     }
 
     fn load_node_keys(&self, config: &CliNodeConfig) -> Result<NodeKeyManager> {
-        // Load the serialized node state from OS key store
-        let key_store = OsKeyStore::new(self.logger.clone());
+        // Create NodeKeyManager with new approach
+        let logger = Arc::new(Logger::new_root(Component::Keys));
+        let mut node_key_manager = NodeKeyManager::new(logger)?;
 
-        if !key_store.keys_exist(&config.keys_name) {
-            return Err(anyhow::anyhow!(
-                "Node keys not found in OS key store: {}",
-                config.keys_name
-            ));
+        // Configure persistence directory
+        node_key_manager.set_persistence_dir(config.persistence_dir.clone());
+
+        // Register device keystore (OS integration)
+        let device_keystore = create_device_keystore_for_platform()
+            .context("Failed to create device keystore for platform")?;
+        node_key_manager.register_device_keystore(device_keystore);
+
+        // Try to load existing state using new API
+        let state_loaded = node_key_manager
+            .probe_and_load_state()
+            .context("Failed to probe and load state")?;
+
+        if state_loaded {
+            log_info!(
+                self.logger,
+                "Loaded existing node keys from device keystore"
+            );
+            Ok(node_key_manager)
+        } else {
+            Err(anyhow::anyhow!(
+                "Node not initialized - run 'runar init' first"
+            ))
         }
-
-        let serialized_state = key_store
-            .retrieve_node_keys(&config.keys_name)
-            .with_context(|| {
-                format!(
-                    "Failed to retrieve node keys from OS key store: {}",
-                    config.keys_name
-                )
-            })?;
-
-        // Deserialize the node state (CBOR)
-        let node_state =
-            from_slice(&serialized_state).context("Failed to deserialize node state")?;
-
-        // Create logger for the key manager
-        let key_logger = Arc::new(Logger::new_root(Component::Keys));
-
-        // Create node key manager from state
-        let node_key_manager = NodeKeyManager::from_state(node_state, key_logger)
-            .context("Failed to create node key manager from state")?;
-
-        log_info!(
-            self.logger,
-            "Node keys loaded from OS key store: {}",
-            config.keys_name
-        );
-
-        Ok(node_key_manager)
     }
 
     fn create_runar_config(

@@ -210,7 +210,7 @@ impl AbstractService for GatwayService {
                             if let Some(val) = value {
                                 if let Ok(service_path) = val.as_type::<String>() {
                                     event_ctx.info(format!(
-                                        "GatwayService {service_name_clone} received $registry/services/{service_path}/state/running event - will add routes for service {service_path}", 
+                                        "GatwayService {service_name_clone} received $registry/services/{service_path}/state/running event - will add routes for service {service_path}",
                                     ));
                                     //TODO: Add routes for service {service_path}
                                 } else {
@@ -256,8 +256,20 @@ impl AbstractService for GatwayService {
             name = self.name
         ));
 
+        // Create parameters to exclude internal services and remote services for gateway
+        let mut params_map = std::collections::HashMap::new();
+        params_map.insert(
+            "include_internal_services".to_string(),
+            ArcValue::new_primitive(false),
+        );
+        params_map.insert(
+            "include_remote_services".to_string(),
+            ArcValue::new_primitive(false),
+        );
+        let params = ArcValue::new_map(params_map);
+
         match context
-            .request("$registry/services/list", None::<ArcValue>, None)
+            .request("$registry/services/list", Some(params), None)
             .await
         {
             Ok(services_arc_value) => {

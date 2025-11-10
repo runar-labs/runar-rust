@@ -1,0 +1,1418 @@
+# FFI API Design – Complete Surface for CA Server/Client and Keys
+
+## Authoritative FFI API Surface (Production-Ready)
+
+This section enumerates the complete, production-ready FFI API required for external platforms (Swift/Kotlin/etc.) to run the entire CA flow end-to-end (server and client) and to manage node keys/certificates, fully aligned with current repository design and tests. All function names and conventions follow existing patterns in `runar-ffi/src/lib.rs`.
+
+### Memory and Error Conventions
+- All functions return 0 on success; non-zero codes on failure.
+- On error, `err` must be set with a human-readable message.
+- Any buffer returned by FFI must be freed by the caller via `rn_free`.
+- Any C string returned by FFI must be freed via `rn_string_free`.
+- Complex inputs/outputs are CBOR-encoded.
+
+### State Management (CRITICAL CHANGE)
+**REMOVED**: The following functions are obsolete and have been removed from the FFI:
+- `rn_keys_node_get_keystore_state` - Node state retrieval function
+- `rn_keys_mobile_get_keystore_state` - Mobile state retrieval function  
+
+**KEPT**: The following function is part of the new design:
+- `rn_keys_flush_state` - Tells the Rust layer to flush/store state (NEW API)
+
+**REASON**: State retrieval/restoration is now handled entirely in the Rust layer using device keystore integration. Only state flushing is exposed to the FFI layer.
+
+**NEW APPROACH**: State management is now handled entirely in the Rust layer using device keystore integration:
+1. **`rn_keys_node_has_keys(keys, out_loaded, err)`** - Returns boolean indicating if state was loaded
+2. **`rn_keys_node_generate_keys(keys, err)`** - Explicit key generation when no state exists
+3. **Device keystore integration** - State is automatically persisted using OS key store (Keychain/Keyring)
+4. **No manual state export/import** - The FFI layer only provides core crypto operations
+
+**Usage Pattern**:
+```c
+// 1. Create and configure NodeKeyManager
+rn_keys_new(&keys, &err);
+rn_keys_set_persistence_dir(keys, "/path/to/persistence", &err);
+rn_keys_register_device_keystore(keys, device_keystore, &err);
+
+// 2. Try to load existing state
+int32_t state_loaded = 0;
+rn_keys_node_has_keys(keys, &state_loaded, &err);
+
+if (state_loaded) {
+    // State loaded successfully - keys are ready
+} else {
+    // No existing state - generate new keys
+    rn_keys_node_generate_keys(keys, &err);
+}
+```
+
+### API Unification and Versioning
+
+### Historical Note: v2 Function Naming Correction
+
+**IMPORTANT**: The FFI API previously had incorrectly named "v2" functions that have been unified to remove confusion:
+
+- `rn_keys_node_has_keys_v2()` → `rn_keys_node_has_keys()` (unified)
+- `rn_keys_node_generate_keys_v2()` → `rn_keys_node_generate_keys()` (unified)  
+- `rn_keys_node_install_certificate_v2()` → `rn_keys_node_install_certificate()` (unified)
+
+**Reason for Unification**:
+- The "v2" suffix was misleading and caused confusion
+- Both v1 and v2 functions existed with different error handling approaches
+- v2 functions had better error handling (no unwraps, proper error codes)
+- v1 functions have been removed (previously renamed to `_old` suffix)
+- The unified API uses the more robust implementations (formerly v2)
+
+**Current State**:
+- All functions now use unified names without version suffixes
+- All implementations use robust error handling (formerly v2 style)
+- Old implementations have been removed to keep codebase clean
+- All tests use the unified function names
+
+**Future Maintenance**:
+- No version suffixes in function names
+- Single implementation per function
+- Consistent error handling across all functions
+- Clear, maintainable API without confusion
+
+## Logger Management (REFACTORED - NO LOGGER PARAMETERS)
+
+**CRITICAL CHANGE**: As part of the logger refactor, all FFI functions that previously accepted `logger: *mut c_void` parameters have been updated to use a global hierarchical logger system. This simplifies the API and ensures consistent logging across all components.
+
+### Global Logger System
+- **Root Logger**: Single global logger instance with component `Custom("ffi")`
+- **Child Loggers**: All components create child loggers using `get_global_logger().with_component(Component::X)`
+- **Node ID**: Set once on root logger, inherited by all child loggers
+- **Log Level**: Can be changed at any time using `rn_set_log_level()`
+
+### Logger Management Functions
+- `rn_set_logger_context(node_id_cstr, err) -> i32` - Set node ID on root logger (can be called before/after logger creation)
+- `rn_set_log_level(level_i32, err) -> i32` - Set global log level (can be called at any time)
+
+### Functions Updated (Logger Parameters Removed)
+**The following functions previously had `logger: *mut c_void` parameters that have been removed:**
+- `rn_keys_ca_node_new` - Now uses `get_global_logger().with_component(Component::Keys)`
+- `rn_transport_ca_server_new` - Now uses `get_global_logger().with_component(Component::Transporter)`
+- `rn_transport_ca_client_new_with_config` - Now uses `get_global_logger().with_component(Component::Transporter)`
+
+### Usage Pattern
+```c
+// 1. Set logger level (optional, can be called at any time)
+rn_set_log_level(4, &err); // Debug level
+
+// 2. Set node ID (optional, initializes logger if needed)
+rn_set_logger_context("node-123", &err);
+
+// 3. Use FFI functions (no logger parameters needed)
+rn_keys_ca_node_new_shared(&ca_node, &err);
+rn_transport_ca_server_new(config, len, ca_node, &server, &err);
+rn_transport_ca_client_new_with_config(config, len, node_keys, &client, &err);
+```
+
+### Logger Refactor Implementation Details
+
+#### Global Logger Architecture
+```rust
+// Global root logger (lazy initialized)
+static GLOBAL_LOGGER: OnceCell<Arc<Logger>> = OnceCell::new();
+
+// Get or create global root logger
+fn get_global_logger() -> Arc<Logger> {
+    GLOBAL_LOGGER.get_or_init(|| {
+        Arc::new(Logger::new_root(Component::Custom("ffi")))
+    }).clone()
+}
+
+// Set node ID on root logger (subsequent calls have no effect)
+fn set_global_logger_context(node_id: String) -> Result<(), String> {
+    let logger = get_global_logger();
+    logger.set_node_id(node_id);
+    Ok(())
+}
+```
+
+#### Hierarchical Logger Pattern
+All components now create child loggers from the global root logger:
+
+| Component | Logger Creation Pattern |
+|-----------|------------------------|
+| **KeysInner** | `get_global_logger().with_component(Component::Keys)` |
+| **QuicTransport** | `get_global_logger().with_component(Component::Transporter)` |
+| **CA Node** | `get_global_logger().with_component(Component::Keys)` |
+| **CA Server** | `get_global_logger().with_component(Component::Transporter)` |
+| **CA Client** | `get_global_logger().with_component(Component::Transporter)` |
+
+#### Logger Hierarchy
+```
+Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
+├── Keys Child Logger (Component::Keys) [inherits node_id]
+├── Transporter Child Logger (Component::Transporter) [inherits node_id]
+└── Any other child loggers created by components
+```
+
+#### Benefits
+- ✅ **Consistent node ID** across all components
+- ✅ **Proper hierarchical logging** with component context
+- ✅ **Parent-child relationship** maintained
+- ✅ **Single source of truth** for logger configuration
+- ✅ **Simplified FFI API** without logger parameters
+- ✅ **Thread-safe** global logger management
+
+## Common Utilities
+- `rn_free(ptr, len)`
+- `rn_string_free(cstr)`
+- `rn_clear_error_history()`
+- `rn_set_log_level(level_i32)`
+
+### Logger Management Functions (NEW)
+- `rn_set_logger_context(node_id_cstr, err) -> i32` - Set node ID on root logger
+- `rn_set_log_level(level_i32, err) -> i32` - Set global log level
+
+---
+
+### Keys – Node Lifecycle, CSR, Certificate Install, QUIC
+- `rn_keys_new(out_keys, err) -> i32`
+- `rn_keys_free(keys)`
+- `rn_keys_set_persistence_dir(keys, dir_cstr, err) -> i32`
+- `rn_keys_register_device_keystore(keys, keystore, err) -> i32`
+- `rn_keys_enable_auto_persist(keys, enable_i32, err) -> i32`
+- `rn_keys_wipe_persistence(keys, err) -> i32`
+- `rn_keys_init_as_node(keys, err) -> i32`
+- `rn_keys_node_has_keys(keys, out_loaded, err) -> i32` (NEW - replaces get_keystore_state)
+- `rn_keys_node_generate_keys(keys, err) -> i32` (NEW - explicit key generation)
+- `rn_keys_node_get_public_key(keys, out_ptr, out_len, err) -> i32`
+- `rn_keys_node_get_agreement_public_key(keys, out_ptr, out_len, err) -> i32`
+- `rn_keys_node_get_node_id(keys, out_cstr, out_has_id, err) -> i32`
+- `rn_keys_node_generate_csr(keys, out_csr_der_ptr, out_len, err) -> i32`
+- `rn_keys_node_install_certificate(keys, cert_message_cbor_ptr, len, err) -> i32`
+- `rn_keys_node_get_quic_certificate_config(keys, out_config_cbor_ptr, out_len, err) -> i32`
+- `rn_keys_node_get_node_certificate(keys, out_cert_der_ptr, out_len, err) -> i32` (recommended)
+
+### Mobile – Certificate Response Conversion
+- `rn_keys_init_as_mobile(keys, err) -> i32`
+- `rn_keys_mobile_from_enroll_response(mobile, enroll_response_cbor, len, out_cert_msg_cbor, out_len, err) -> i32`
+- `rn_keys_mobile_from_renew_response(mobile, renew_response_cbor, len, out_cert_msg_cbor, out_len, err) -> i32`
+
+### Profile Key Operations (NodeKeyManager frontend/mobile role)
+- `rn_keys_node_derive_user_profile_key(keys, label_cstr, out_pubkey_ptr, out_len, err) -> i32`
+- `rn_keys_node_decrypt_with_profile(keys, envelope_cbor, len, profile_id_cstr, out_data_ptr, out_len, err) -> i32`
+
+### CA Node – In-Process Authority (CONSISTENT SHARED HANDLE API)
+- `rn_keys_ca_node_new_shared(out_shared_ca_node, err) -> i32` (CREATES SHARED HANDLE - uses global logger)
+- `rn_keys_ca_node_free_shared(shared_ca_node)` (FREES SHARED HANDLE)
+- `rn_keys_ca_node_setup_complete(shared_ca_node, root_ca_subject, issuing_ca_subject, validity_days, issuing_ca_serial, ea_public_keys, ea_keys_len, network_id, err) -> i32`
+- `rn_keys_ca_node_configure_enrollment_authority(shared_ca_node, ea_public_keys_cbor, len, err) -> i32`
+- `rn_keys_ca_node_handle_enroll(shared_ca_node, request_cbor, len, remote_addr_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_renew(shared_ca_node, request_cbor, len, peer_cert_der, peer_len, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_revoke(shared_ca_node, request_cbor, len, admin_ski_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_chain(shared_ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_status(shared_ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_crl(shared_ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_add_admin_ski(shared_ca_node, ski, err) -> i32` (ADMIN OPERATIONS)
+- `rn_keys_ca_node_revoke_token(shared_ca_node, token_id, err) -> i32` (ADMIN OPERATIONS)
+- `rn_keys_ca_node_generate_crl_lite(shared_ca_node, out_crl, out_len, err) -> i32` (ADMIN OPERATIONS)
+
+### CA Server – QUIC Servers (Bootstrap + Authenticated)
+- `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, out_server, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
+- `rn_transport_ca_server_free(server)`
+- `rn_transport_ca_server_configure_admin_skis(server, admin_skis_cbor, len, err) -> i32`
+- `rn_transport_ca_server_start(server, err) -> i32`
+- `rn_transport_ca_server_stop(server, err) -> i32`
+- `rn_transport_ca_server_get_bootstrap_addr(server, out_cstr, err) -> i32`
+- `rn_transport_ca_server_get_authenticated_addr(server, out_cstr, err) -> i32`
+
+### CA Client – QUIC Client
+- `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, out_client, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
+  - config_cbor = CaClientConfigAll (CBOR):
+    - bootstrap_server: String
+    - authenticated_server: String
+    - network_id: String
+    - request_timeout_seconds: u32
+    - max_retries: u32
+    - root_ca_der: Vec<u8>
+    - issuing_ca_der: Vec<u8>
+- `rn_transport_ca_client_free(client)`
+- `rn_transport_ca_client_enroll(client, bootstrap_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
+- `rn_transport_ca_client_renew(client, authenticated_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
+- `rn_transport_ca_client_revoke(client, authenticated_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
+- `rn_transport_ca_client_get_chain(client, bootstrap_addr_cstr, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_transport_ca_client_get_status(client, authenticated_addr_cstr, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_transport_ca_client_get_crl(client, authenticated_addr_cstr, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+
+### Certificate Helpers (Optional)
+- `rn_keys_certificate_extract_ski(cert_der, len, out_hex_cstr, err) -> i32`
+- `rn_keys_certificate_get_serial(cert_der, len, out_hex_cstr, err) -> i32`
+
+### Error Codes (Additions)
+- `RN_ERROR_CA_NODE_NOT_INITIALIZED`
+- `RN_ERROR_CA_SERVER_NOT_RUNNING`
+- `RN_ERROR_CA_CLIENT_CONNECTION_FAILED`
+- `RN_ERROR_CERTIFICATE_VALIDATION_FAILED`
+- `RN_ERROR_PROFILE_KEY_NOT_FOUND`
+
+### Logger Error Codes
+(Not used in current implementation)
+
+---
+
+## FFI E2E Test Plan – QUIC CA Flow Parity
+
+This section defines an FFI-based end-to-end test sequence that mirrors `runar-transporter/tests/full_transport_e2e_test.rs`. It validates that external platforms can perform the entire flow through the FFI API.
+
+All payloads denoted as CBOR must follow the same Rust-side structs used by transporter/keys:
+- `CsrEnrollRequest`, `CsrEnrollResponse`
+- `RenewRequest`, `RenewResponse`
+- `RevokeRequest`, `RevokeResponse`
+- `ChainRequest`/`ChainResponse`
+- `StatusResponse`
+- `CrlResponse`
+- `NodeCertificateMessage`
+
+### Phase 1: Setup
+1) Logging
+   - Call `rn_set_log_level(LogLevel::Debug as i32)`.
+2) Crypto provider (Rust internal)
+   - Rust-side test harness ensures rustls crypto provider is installed.
+3) Keys handles
+   - `rn_keys_new(&mut node_keys, &mut err)` for the mobile node role
+   - `rn_keys_new(&mut mobile_keys, &mut err)` for `MobileKeyManager`
+   - `rn_keys_init_as_node(node_keys, &mut err)`
+   - `rn_keys_init_as_mobile(mobile_keys, &mut err)`
+
+### Phase 2: CA Node and Server
+1) CA Node
+   - `rn_keys_ca_node_new_shared(&mut shared_ca_node, &mut err)` (CREATES SHARED HANDLE)
+   - `rn_keys_ca_node_setup_complete(shared_ca_node, root_ca_subject, issuing_ca_subject, validity_days, issuing_ca_serial, ea_public_keys, ea_keys_len, network_id, &mut err)`
+2) Enrollment Authority
+   - `rn_keys_ca_node_configure_enrollment_authority(shared_ca_node, ea_pubkeys_cbor, len, &mut err)`
+3) QUIC Servers (bootstrap + authenticated)
+   - Build CA server config CBOR: `{ bootstrap_bind: "127.0.0.1:0", authenticated_bind: "127.0.0.1:0", network_id: "test_network", rate_limit_per_minute: 5, rate_limit_per_hour: 30 }`
+   - `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, &mut server, &mut err)` (LOGGER PARAMETER REMOVED)
+   - `rn_transport_ca_server_start(server, &mut err)`
+   - `rn_transport_ca_server_get_bootstrap_addr(server, &mut bootstrap_cstr, &mut err)`
+   - `rn_transport_ca_server_get_authenticated_addr(server, &mut authenticated_cstr, &mut err)`
+
+### Phase 3: Mobile Node (client role) CSR and Enrollment
+1) Generate CSR on node
+   - `rn_keys_node_generate_csr(node_keys, &mut csr_ptr, &mut csr_len, &mut err)`
+2) Enrollment Token (Rust-side helper)
+   - Construct `EnrollmentToken` using Rust helper; CBOR serialize.
+3) Build `CsrEnrollRequest` CBOR: `{ network_id: "test_network", csr_der, enrollment_token }`
+4) CA Client (one-shot creation with full config CBOR)
+   - Build `CaClientConfigAll` CBOR with:
+     - bootstrap_server, authenticated_server, network_id, request_timeout_seconds, max_retries
+     - root_ca_der (from Root CA)
+     - issuing_ca_der (from Issuing CA)
+   - `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, &mut client, &mut err)` (LOGGER PARAMETER REMOVED)
+5) Enroll
+   - `rn_transport_ca_client_enroll(client, bootstrap_addr_cstr, enroll_req_cbor, len, &mut resp_ptr, &mut resp_len, &mut err)` -> CBOR `CsrEnrollResponse`
+6) Convert and Install Certificate
+   - `rn_keys_mobile_from_enroll_response(mobile_keys, resp_ptr, resp_len, &mut cert_msg_ptr, &mut cert_msg_len, &mut err)` -> CBOR `NodeCertificateMessage`
+   - `rn_keys_node_install_certificate(node_keys, cert_msg_ptr, cert_msg_len, &mut err)`
+7) QUIC Cert Config Validation (optional asserts)
+   - `rn_keys_node_get_quic_certificate_config(node_keys, &mut cfg_ptr, &mut cfg_len, &mut err)`
+
+### Phase 4: Renewal (Authenticated, mTLS)
+1) Generate renewal CSR
+   - `rn_keys_node_generate_csr(node_keys, &mut csr_ptr, &mut csr_len, &mut err)`
+2) `RenewRequest` CBOR: `{ network_id: "test_network", csr_der }`
+3) `rn_transport_ca_client_renew(client, authenticated_addr_cstr, renew_req_cbor, len, &mut resp_ptr, &mut resp_len, &mut err)` -> CBOR `RenewResponse`
+4) Convert and install
+   - `rn_keys_mobile_from_renew_response(mobile_keys, resp_ptr, resp_len, &mut cert_msg_ptr, &mut cert_msg_len, &mut err)`
+   - `rn_keys_node_install_certificate(node_keys, cert_msg_ptr, cert_msg_len, &mut err)`
+
+### Phase 5: Revocation + CRL-lite
+1) Admin SKI configuration
+   - Extract SKI from node’s installed leaf cert (optional helper or Rust-side parsing)
+   - `rn_transport_ca_server_configure_admin_skis(server, admin_skis_cbor, len, &mut err)`
+2) Build `RevokeRequest` CBOR: `{ network_id: "test_network", certificate_serial, reason: "testing" }`
+3) Revoke via client (mTLS)
+   - `rn_transport_ca_client_revoke(client, authenticated_addr_cstr, revoke_req_cbor, len, &mut resp_ptr, &mut resp_len, &mut err)` -> `RevokeResponse`
+4) CRL generation and fetch
+   - `rn_keys_ca_node_handle_crl(ca_node, network_id_cstr, &mut crl_ptr, &mut crl_len, &mut err)` -> `CrlResponse`
+   - `rn_transport_ca_client_get_crl(client, authenticated_addr_cstr, network_id_cstr, &mut crl2_ptr, &mut crl2_len, &mut err)` -> `CrlResponse`
+   - Assert equality of key fields (e.g., issuing serial hex, revoked set size).
+
+### Phase 6: Status and Chain
+- `rn_transport_ca_client_get_status(client, authenticated_addr_cstr, network_id_cstr, &mut status_ptr, &mut status_len, &mut err)` -> `StatusResponse`
+- `rn_transport_ca_client_get_chain(client, bootstrap_addr_cstr, network_id_cstr, &mut chain_ptr, &mut chain_len, &mut err)` -> `ChainResponse`
+
+### Phase 7: Profile Keys
+1) Derive profile keys
+   - `rn_keys_node_derive_user_profile_key(node_keys, "personal", &mut pub_ptr, &mut pub_len, &mut err)`
+   - `rn_keys_node_derive_user_profile_key(node_keys, "work", &mut pub2_ptr, &mut pub2_len, &mut err)`
+2) Encrypt/decrypt envelope (Rust-side building of envelope or via existing FFI encrypt if needed)
+   - Use `rn_keys_node_decrypt_with_profile(node_keys, envelope_cbor, len, personal_profile_id_cstr, &mut pt_ptr, &mut pt_len, &mut err)` and assert plaintext.
+
+### Phase 8: Rate Limiting (Bootstrap)
+- Send multiple `CsrEnrollRequest` via `rn_transport_ca_client_enroll` with token reuse to trigger server rate limits; expect first 5 succeed, 6th fails per configuration. Use short sleeps between calls as in test.
+
+### Phase 9: Token Revocation
+- Rust-side: `ca_node` revoke token internally (or provide an FFI if needed later).
+- Attempt to enroll with revoked token; expect error from `rn_transport_ca_client_enroll`.
+
+### Phase 10: Negative Cases
+- Invalid token (wrong network_id)
+- Unauthorized renewal (new node without enrollment) via `rn_transport_ca_client_renew` -> expect error
+
+### Cleanup
+- `rn_transport_ca_server_stop(server, &mut err)`
+- `rn_transport_ca_server_free(server)`
+- `rn_transport_ca_client_free(client)`
+- `rn_keys_free(node_keys)`
+- `rn_keys_free(mobile_keys)`
+- `rn_keys_ca_node_free_shared(shared_ca_node)`
+
+This FFI E2E validates that all CA server and client operations, certificate lifecycle, profile keys, and rate-limiting behaviors are fully achievable through the FFI layer.
+
+---
+
++# FFI API Design Document - NodeKeyManager Dual-Role Implementation
+
+## Overview
+
+This document specifies the required changes to the FFI API (`runar-ffi/src/lib.rs`) to align with the latest `runar-keys` and `runar-transporter` crates while implementing the NodeKeyManager dual-role design. The FFI must expose all new APIs while preserving existing transporter callbacks that are currently working.
+
+## Current State Analysis
+
+### Working Components (MUST PRESERVE)
+- **Transporter callbacks** - Currently working, must not break
+- **Basic key manager initialization** - `rn_keys_init_as_node` and `rn_keys_init_as_mobile`
+- **Core envelope encryption/decryption** - `rn_keys_node_encrypt_with_envelope`, `rn_keys_node_decrypt_envelope`
+- **Network key management** - `rn_keys_mobile_*` functions for network operations
+- **Transport operations** - `rn_transport_*` functions for QUIC transport
+
+### Issues to Fix
+1. **Outdated NodeKeyManager API** - Current FFI uses old `NodeKeyManager::new()` that generates keys immediately
+2. **Missing new APIs** - Profile key management, CA Node operations, certificate management
+3. **Type mismatches** - Some return types and parameters don't match current API
+4. **Missing error handling** - New error types not exposed
+
+## Required Changes
+
+### 1. NodeKeyManager Lifecycle Updates (CRITICAL)
+
+#### Current Problem
+```rust
+// Current FFI (WRONG)
+let manager = NodeKeyManager::new(logger)?; // Generates keys immediately
+```
+
+#### Required Fix
+```rust
+// New FFI (CORRECT)
+let manager = NodeKeyManager::new(logger)?; // No key generation
+let ready = manager.probe_and_load_state()?;
+if !ready {
+    manager.generate_keys()?; // Generate keys only when needed
+}
+```
+
+#### FFI Functions to Update
+- `rn_keys_init_as_node` - Update to handle new lifecycle
+- `rn_keys_node_get_keystore_state` - Update to handle `Option<String>` return types
+- All functions that assume keys exist - Add proper error handling
+
+### 2. New NodeKeyManager APIs (CRITICAL)
+
+#### Profile Key Management
+```rust
+// New FFI functions needed
+pub extern "C" fn rn_keys_node_derive_user_profile_key(
+    keys: *mut c_void,
+    label: *const c_char,
+    out_public_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_node_decrypt_with_profile(
+    keys: *mut c_void,
+    envelope_data: *const u8,
+    envelope_len: usize,
+    profile_id: *const c_char,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+```
+
+#### Certificate Management
+```rust
+// New FFI functions needed
+pub extern "C" fn rn_keys_node_get_certificate_status(
+    keys: *mut c_void,
+    out_status: *mut i32,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_node_get_quic_certificate_config(
+    keys: *mut c_void,
+    out_config: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_node_validate_peer_certificate(
+    keys: *mut c_void,
+    peer_cert: *const u8,
+    cert_len: usize,
+    err: *mut RnError
+) -> i32;
+```
+
+#### Network Key Management
+```rust
+// New FFI functions needed
+pub extern "C" fn rn_keys_node_install_network_key(
+    keys: *mut c_void,
+    network_key_message: *const u8,
+    message_len: usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_node_get_network_agreement(
+    keys: *mut c_void,
+    network_public_key: *const u8,
+    key_len: usize,
+    out_agreement: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_node_has_network_private_key(
+    keys: *mut c_void,
+    network_public_key: *const u8,
+    key_len: usize,
+    out_has_key: *mut i32,
+    err: *mut RnError
+) -> i32;
+```
+
+### 3. CA Node APIs (NEW)
+
+#### CA Node Management (CONSISTENT SHARED HANDLE API)
+```rust
+// New FFI functions for CA Node operations - ALL USE SHARED HANDLES
+pub extern "C" fn rn_keys_ca_node_new_shared(
+    out_shared_ca_node: *mut *mut c_void,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_ca_node_free_shared(
+    shared_ca_node: *mut c_void
+);
+
+pub extern "C" fn rn_keys_ca_node_setup_complete(
+    shared_ca_node: *mut c_void,
+    root_ca_subject: *const c_char,
+    issuing_ca_subject: *const c_char,
+    validity_days: u32,
+    issuing_ca_serial: u64,
+    ea_public_keys: *const u8,
+    ea_keys_len: usize,
+    network_id: *const c_char,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
+    shared_ca_node: *mut c_void,
+    ea_public_keys: *const u8,
+    keys_len: usize,
+    err: *mut RnError
+) -> i32;
+```
+
+#### CA Node Operations (ALL USE SHARED HANDLES)
+```rust
+// Enrollment operations
+pub extern "C" fn rn_keys_ca_node_handle_enroll(
+    shared_ca_node: *mut c_void,
+    request: *const u8,
+    request_len: usize,
+    remote_addr: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Renewal operations
+pub extern "C" fn rn_keys_ca_node_handle_renew(
+    shared_ca_node: *mut c_void,
+    request: *const u8,
+    request_len: usize,
+    peer_cert: *const u8,
+    cert_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Revocation operations
+pub extern "C" fn rn_keys_ca_node_handle_revoke(
+    shared_ca_node: *mut c_void,
+    request: *const u8,
+    request_len: usize,
+    admin_ski: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Chain and status operations
+pub extern "C" fn rn_keys_ca_node_handle_chain(
+    shared_ca_node: *mut c_void,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_keys_ca_node_handle_status(
+    shared_ca_node: *mut c_void,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// CRL operations
+pub extern "C" fn rn_keys_ca_node_handle_crl(
+    shared_ca_node: *mut c_void,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4. CA Server APIs (NEW)
+
+#### CA Server Management
+```rust
+// CA Server creation and configuration
+pub extern "C" fn rn_transport_ca_server_new(
+    config: *const u8,
+    config_len: usize,
+    shared_ca_node: *mut c_void,
+    logger: *mut c_void,
+    out_server: *mut *mut c_void,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_server_configure_admin_skis(
+    server: *mut c_void,
+    admin_skis: *const u8,
+    skis_len: usize,
+    err: *mut RnError
+) -> i32;
+
+// CA Server operations
+pub extern "C" fn rn_transport_ca_server_start(
+    server: *mut c_void,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_server_stop(
+    server: *mut c_void,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_server_get_bootstrap_addr(
+    server: *mut c_void,
+    out_addr: *mut *mut c_char,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_server_get_authenticated_addr(
+    server: *mut c_void,
+    out_addr: *mut *mut c_char,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4.1. Certificate Authority Creation APIs (REMOVED)
+
+Root/Issuing CA are created and installed internally via `rn_keys_ca_node_setup_complete(...)`. No standalone CA creation/getter/free functions are exported in the current implementation.
+
+### 4.2. Enrollment Token Management APIs (NEW)
+
+#### Enrollment Token Generation
+```rust
+// Generate enrollment token
+pub extern "C" fn rn_keys_enrollment_token_generate(
+    ea_key: *const u8,
+    key_len: usize,
+    token_id: *const c_char,
+    network_id: *const c_char,
+    subject: *const c_char,
+    not_before: u64,
+    expires_at: u64,
+    nonce: *const u8,
+    nonce_len: usize,
+    permissions: *const u8,
+    permissions_len: usize,
+    out_token: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Validate enrollment token
+pub extern "C" fn rn_keys_enrollment_token_validate(
+    token: *const u8,
+    token_len: usize,
+    ea_public_key: *const u8,
+    key_len: usize,
+    out_valid: *mut i32,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4.3. Mobile Key Manager Integration APIs (NEW)
+
+#### Mobile Key Manager Response Conversion
+```rust
+// Convert enrollment response to certificate message
+pub extern "C" fn rn_keys_mobile_from_enroll_response(
+    mobile: *mut c_void,
+    response: *const u8,
+    response_len: usize,
+    out_cert_message: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Convert renewal response to certificate message
+pub extern "C" fn rn_keys_mobile_from_renew_response(
+    mobile: *mut c_void,
+    response: *const u8,
+    response_len: usize,
+    out_cert_message: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4.4. Certificate Management APIs (NEW)
+
+#### Certificate Operations
+```rust
+// Get QUIC certificate configuration
+pub extern "C" fn rn_keys_node_get_quic_certificate_config(
+    keys: *mut c_void,
+    out_config: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Get node certificate
+pub extern "C" fn rn_keys_node_get_node_certificate(
+    keys: *mut c_void,
+    out_cert: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Install certificate from certificate message
+pub extern "C" fn rn_keys_node_install_certificate(
+    keys: *mut c_void,
+    cert_message: *const u8,
+    cert_message_len: usize,
+    err: *mut RnError
+) -> i32;
+
+// Extract certificate SKI
+pub extern "C" fn rn_keys_certificate_extract_ski(
+    cert: *const u8,
+    cert_len: usize,
+    out_ski: *mut *mut c_char,
+    err: *mut RnError
+) -> i32;
+
+// Get certificate serial
+pub extern "C" fn rn_keys_certificate_get_serial(
+    cert: *const u8,
+    cert_len: usize,
+    out_serial: *mut *mut c_char,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4.5. Profile Key Operations APIs (NEW)
+
+#### Profile Key Encryption/Decryption
+```rust
+// Encrypt data with envelope using profile keys
+pub extern "C" fn rn_keys_node_encrypt_with_envelope(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    network_key: *const u8,
+    network_key_len: usize,
+    profile_keys: *const u8,
+    profile_keys_len: usize,
+    out_envelope: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Decrypt envelope data using profile key
+pub extern "C" fn rn_keys_node_decrypt_with_profile(
+    keys: *mut c_void,
+    envelope: *const u8,
+    envelope_len: usize,
+    profile_id: *const c_char,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+// Get compact ID for profile key
+pub extern "C" fn rn_keys_get_compact_id(
+    public_key: *const u8,
+    key_len: usize,
+    out_id: *mut *mut c_char,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4.6. CA Node Admin Management APIs (NEW)
+
+#### CA Node Admin Operations (ALL USE SHARED HANDLES)
+```rust
+// Add admin SKI to CA Node
+pub extern "C" fn rn_keys_ca_node_add_admin_ski(
+    shared_ca_node: *mut c_void,
+    ski: *const c_char,
+    err: *mut RnError
+) -> i32;
+
+// Revoke enrollment token
+pub extern "C" fn rn_keys_ca_node_revoke_token(
+    shared_ca_node: *mut c_void,
+    token_id: *const c_char,
+    err: *mut RnError
+) -> i32;
+
+// Generate CRL-lite
+pub extern "C" fn rn_keys_ca_node_generate_crl_lite(
+    shared_ca_node: *mut c_void,
+    out_crl: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+```
+
+### 4.7. CA Client Configuration APIs (REMOVED)
+
+**Note:** The step-by-step CA Client configuration functions (`rn_transport_ca_client_configure`, `rn_transport_ca_client_set_root_ca_cert`, `rn_transport_ca_client_set_issuing_ca_cert`, `rn_transport_ca_client_set_node_key_manager`) have been removed from the design as `rn_transport_ca_client_new_with_config` provides complete functionality in a single atomic operation.
+
+**Reasoning:** All configuration options are available through the `CaClientConfigAll` CBOR structure passed to `rn_transport_ca_client_new_with_config`, making the step-by-step approach redundant and unused.
+
+### 5. CA Client APIs (NEW)
+
+#### CA Client Management
+```rust
+// CA Client creation and operations
+// Note: rn_transport_ca_client_new (basic creation) is not implemented as 
+// rn_transport_ca_client_new_with_config provides complete functionality.
+
+pub extern "C" fn rn_transport_ca_client_enroll(
+    client: *mut c_void,
+    bootstrap_addr: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_client_renew(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_client_revoke(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_client_get_chain(
+    client: *mut c_void,
+    bootstrap_addr: *const c_char,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_client_get_status(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+
+pub extern "C" fn rn_transport_ca_client_get_crl(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError
+) -> i32;
+```
+
+### 6. Updated Return Types and Error Handling
+
+#### Updated Return Types
+```rust
+// Current (WRONG)
+pub extern "C" fn rn_keys_node_get_node_id(
+    keys: *mut c_void,
+    out_id: *mut *mut c_char,
+    err: *mut RnError
+) -> i32;
+
+// New (CORRECT)
+pub extern "C" fn rn_keys_node_get_node_id(
+    keys: *mut c_void,
+    out_id: *mut *mut c_char,
+    out_has_id: *mut i32, // 1 if has ID, 0 if not
+    err: *mut RnError
+) -> i32;
+```
+
+#### New Error Codes
+```rust
+// Add new error codes for CA operations
+pub const RN_ERROR_CA_NODE_NOT_INITIALIZED: i32 = 1001;
+pub const RN_ERROR_CA_SERVER_NOT_RUNNING: i32 = 1002;
+pub const RN_ERROR_CA_CLIENT_CONNECTION_FAILED: i32 = 1003;
+pub const RN_ERROR_CERTIFICATE_VALIDATION_FAILED: i32 = 1004;
+pub const RN_ERROR_PROFILE_KEY_NOT_FOUND: i32 = 1005;
+pub const RN_ERROR_ENROLLMENT_TOKEN_INVALID: i32 = 1006;
+pub const RN_ERROR_RATE_LIMIT_EXCEEDED: i32 = 1007;
+pub const RN_ERROR_ADMIN_NOT_AUTHORIZED: i32 = 1008;
+pub const RN_ERROR_CERTIFICATE_CREATION_FAILED: i32 = 1009;
+pub const RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED: i32 = 1010;
+pub const RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED: i32 = 1011;
+pub const RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED: i32 = 1012;
+pub const RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED: i32 = 1013;
+pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
+pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
+pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
+pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
+
+// Logger error codes
+pub const RN_ERROR_LOGGER_ALREADY_INITIALIZED: i32 = 1020;
+pub const RN_ERROR_LOGGER_NODE_ID_ALREADY_SET: i32 = 1021;
+pub const RN_ERROR_LOGGER_INVALID_NODE_ID: i32 = 1022;
+pub const RN_ERROR_LOGGER_INVALID_LEVEL: i32 = 1023;
+```
+
+### 7. Data Structures for FFI
+
+#### New C-compatible structures
+```rust
+// CA Server Configuration
+#[repr(C)]
+pub struct CaServerConfig {
+    pub bootstrap_bind: *const c_char,
+    pub authenticated_bind: *const c_char,
+    pub network_id: *const c_char,
+    pub rate_limit_per_minute: u32,
+    pub rate_limit_per_hour: u32,
+}
+
+// CA Client Configuration
+#[repr(C)]
+pub struct CaClientConfig {
+    pub bootstrap_server: *const c_char,
+    pub authenticated_server: *const c_char,
+    pub network_id: *const c_char,
+    pub request_timeout_seconds: u32,
+    pub max_retries: u32,
+}
+
+// Certificate Status
+#[repr(C)]
+pub struct CertificateStatus {
+    pub is_valid: i32,
+    pub not_before: u64,
+    pub not_after: u64,
+    pub serial_hex: *mut c_char,
+}
+
+// Profile Key Info
+#[repr(C)]
+pub struct ProfileKeyInfo {
+    pub profile_id: *mut c_char,
+    pub public_key: *mut u8,
+    pub public_key_len: usize,
+}
+
+// Enrollment Token Parameters
+#[repr(C)]
+pub struct EnrollmentTokenParams {
+    pub token_id: *const c_char,
+    pub network_id: *const c_char,
+    pub subject: *const c_char,
+    pub not_before: u64,
+    pub expires_at: u64,
+    pub nonce: *const u8,
+    pub nonce_len: usize,
+    pub permissions: *const u8,
+    pub permissions_len: usize,
+}
+
+// Certificate Information
+#[repr(C)]
+pub struct CertificateInfo {
+    pub cert_der: *mut u8,
+    pub cert_len: usize,
+    pub subject: *mut c_char,
+    pub serial_hex: *mut c_char,
+    pub ski_hex: *mut c_char,
+}
+
+// Profile Key Encryption Parameters
+#[repr(C)]
+pub struct ProfileKeyEncryptionParams {
+    pub data: *const u8,
+    pub data_len: usize,
+    pub network_key: *const u8,
+    pub network_key_len: usize,
+    pub profile_keys: *const u8,
+    pub profile_keys_len: usize,
+}
+```
+
+## Implementation Plan
+
+### Phase 1: Core FFI Infrastructure (CRITICAL)
+1. **Update existing FFI** - Fix NodeKeyManager lifecycle and existing functions
+2. **Add error codes** - All new error codes for comprehensive error handling
+3. **Add data structures** - C-compatible structures for complex data
+4. **Memory management** - Proper C-compatible memory management
+
+### Phase 2: Certificate Authority Creation APIs
+1. **CA Node Shared Handle** - `rn_keys_ca_node_new_shared`
+2. **CA Setup** - `rn_keys_ca_node_setup_complete`
+3. **CA certificate access** - get_certificate_der, get_certificate_subject
+4. **CA resource management** - proper cleanup and memory management
+
+### Phase 3: Enrollment Token Management APIs
+1. **Token generation** - rn_keys_enrollment_token_generate
+2. **Token validation** - rn_keys_enrollment_token_validate
+3. **Token parameters** - proper CBOR serialization for complex parameters
+4. **Error handling** - specific error codes for token operations
+
+### Phase 4: Mobile Key Manager Integration APIs
+1. **Response conversion** - from_enroll_response, from_renew_response
+2. **Mobile key manager** - proper integration with existing mobile APIs
+3. **Certificate message handling** - proper CBOR serialization
+4. **Error handling** - specific error codes for mobile operations
+
+### Phase 5: Certificate Management APIs
+1. **Certificate operations** - get_quic_certificate_config, get_node_certificate
+2. **Certificate installation** - install_certificate_from_message
+3. **Certificate analysis** - extract_ski, get_serial
+4. **Certificate validation** - proper certificate handling
+
+### Phase 6: Profile Key Operations APIs
+1. **Profile key encryption** - encrypt_with_envelope
+2. **Profile key decryption** - decrypt_with_profile
+3. **Compact ID generation** - get_compact_id
+4. **Profile key management** - proper integration with existing profile APIs
+
+### Phase 7: CA Node Admin Management APIs
+1. **Admin management** - add_admin_ski, revoke_token
+2. **CRL generation** - generate_crl_lite
+3. **Admin operations** - proper admin functionality
+4. **Error handling** - specific error codes for admin operations
+
+### Phase 8: CA Client Configuration APIs
+1. **Client configuration** - configure, set_root_ca_cert, set_issuing_ca_cert
+2. **Client setup** - set_node_key_manager
+3. **Configuration management** - proper configuration handling
+4. **Error handling** - specific error codes for client configuration
+
+### Phase 9: Testing and Validation
+1. **Unit tests** - Test each new FFI function individually
+2. **Integration tests** - Test end-to-end scenarios matching full_transport_e2e_test.rs
+3. **Memory tests** - Validate memory management and cleanup
+4. **Performance tests** - Ensure efficient FFI design
+5. **E2E test implementation** - Complete FFI version of full_transport_e2e_test.rs
+
+## Full Refactor Approach
+
+### No Backward Compatibility
+- **Complete rewrite** of FFI API to align with latest design
+- **Clean, modern API** following current best practices
+- **No legacy support** - all APIs are new and properly designed
+- **Single source of truth** - FFI directly exposes current crate APIs
+
+### Design Principles
+- **Clean API surface** - Only expose what's actually needed
+- **Consistent patterns** - All functions follow the same naming and parameter conventions
+- **Proper error handling** - Comprehensive error codes and validation
+- **Memory safety** - Proper C-compatible memory management
+- **Performance first** - Efficient FFI design with minimal overhead
+
+## Security Considerations
+
+### Input Validation
+- All string inputs must be validated for null termination
+- All buffer inputs must be validated for length
+- All certificate inputs must be validated for format
+
+### Error Handling
+- Never expose internal error details to FFI
+- Always return appropriate error codes
+- Log detailed errors internally for debugging
+
+### Memory Management
+- All allocated memory must be freed with `rn_free`
+- All string allocations must be freed with `rn_string_free`
+- Prevent memory leaks in error paths
+
+## Testing Strategy
+
+### Unit Tests
+- Test each new FFI function individually
+- Test error handling and edge cases
+- Test memory management and cleanup
+
+### Integration Tests
+- Test integration with existing transporter
+- Test end-to-end CA operations
+- Test profile key management scenarios
+
+### Compatibility Tests
+- Test that existing code continues to work
+- Test migration scenarios
+- Test performance impact
+
+## Complete E2E Test Coverage
+
+### Full Transport E2E Test Requirements
+
+The updated FFI API design now supports **100% of the functionality** required to implement the complete `full_transport_e2e_test.rs` test using only FFI functions. This includes:
+
+#### Server Role (CA Node Infrastructure)
+1. **Root CA Creation** - `rn_keys_ca_create_root_ca`
+2. **Issuing CA Creation** - `rn_keys_ca_create_issuing_ca`
+3. **CA Node Setup** - `rn_keys_ca_node_new`, `rn_keys_ca_node_install_issuing_ca`
+4. **CA Server Configuration** - `rn_transport_ca_server_new`, `rn_transport_ca_server_configure_admin_skis`
+5. **CA Server Operations** - `rn_transport_ca_server_start`, `rn_transport_ca_server_stop`
+6. **Admin Management** - `rn_keys_ca_node_add_admin_ski`, `rn_keys_ca_node_revoke_token`
+7. **CRL Generation** - `rn_keys_ca_node_generate_crl_lite`
+
+#### Client Role (Mobile Node Operations)
+1. **Mobile Key Manager** - `rn_keys_init_as_mobile`, `rn_keys_mobile_initialize_user_root_key`
+2. **Node Key Manager** - `rn_keys_init_as_node`, `rn_keys_node_generate_keys`
+3. **CA Client Configuration** - `rn_transport_ca_client_new_with_config`
+4. **Certificate Operations** - `rn_keys_node_generate_csr`, `rn_keys_node_install_certificate`
+5. **Profile Key Operations** - `rn_keys_node_derive_user_profile_key`, `rn_keys_node_encrypt_with_envelope`
+6. **Certificate Analysis** - `rn_keys_certificate_extract_ski`, `rn_keys_certificate_get_serial`
+
+#### Cross-Role Operations
+1. **Enrollment Token Generation** - `rn_keys_enrollment_token_generate`
+2. **Mobile Response Conversion** - `rn_keys_mobile_from_enroll_response`, `rn_keys_mobile_from_renew_response`
+3. **CA Client Operations** - `rn_transport_ca_client_enroll`, `rn_transport_ca_client_renew`, `rn_transport_ca_client_revoke`
+4. **Certificate Management** - `rn_keys_node_get_quic_certificate_config`, `rn_keys_node_get_node_certificate`
+
+### Test Phases Covered
+
+All 12 phases of the `full_transport_e2e_test.rs` are now supported:
+
+1. **Phase 1: CA Node Infrastructure Setup** ✅
+2. **Phase 2: REAL QUIC Transport Setup** ✅
+3. **Phase 3: Mobile Node Setup** ✅
+4. **Phase 4: Enrollment Token Generation** ✅
+5. **Phase 5: Mobile Node Enrollment** ✅
+6. **Phase 6: Certificate Renewal** ✅
+7. **Phase 7: Certificate Revocation** ✅
+8. **Phase 8: CRL-lite Generation and Validation** ✅
+9. **Phase 9: CA Node API Status and Chain** ✅
+10. **Phase 10: Profile Key Functionality** ✅
+11. **Phase 11: Rate Limiting** ✅
+12. **Phase 12: Error Handling** ✅
+
+### FFI Design Principles Followed
+
+1. **Synchronous Operations** - All FFI functions are synchronous, following FFI best practices
+2. **CBOR Serialization** - Complex parameters use CBOR serialization as specified
+3. **Memory Management** - Proper C-compatible memory management with cleanup functions
+4. **Error Handling** - Comprehensive error codes and validation
+5. **No Builder Patterns** - Simple, single-purpose functions following FFI patterns
+6. **Configuration Structs** - C-compatible structures for complex configuration
+7. **Resource Management** - Proper resource creation, usage, and cleanup
+
+## Conclusion
+
+This design provides a comprehensive update to the FFI API that:
+1. Fixes existing issues with NodeKeyManager lifecycle
+2. Exposes all new APIs from the dual-role design
+3. Preserves working transporter callbacks
+4. Maintains backward compatibility where possible
+5. Provides clear migration path for breaking changes
+6. Ensures security and proper error handling
+7. **Supports 100% of full_transport_e2e_test.rs functionality via FFI**
+8. **Implements global hierarchical logger system** (LOGGER REFACTOR)
+
+The implementation should follow the phased approach to minimize risk and ensure each component is properly tested before moving to the next phase.
+
+## Logger Refactor Summary
+
+### Changes Made
+1. **Removed logger parameters** from 3 FFI functions:
+   - `rn_keys_ca_node_new` - removed `logger: *mut c_void` parameter
+   - `rn_transport_ca_server_new` - removed `logger: *mut c_void` parameter  
+   - `rn_transport_ca_client_new_with_config` - removed `logger: *mut c_void` parameter
+
+2. **Added 2 new logger management functions**:
+   - `rn_set_logger_context(node_id_cstr, err) -> i32`
+   - `rn_set_log_level(level_i32, err) -> i32`
+
+3. **Added 4 new error codes**:
+   - `RN_ERROR_LOGGER_ALREADY_INITIALIZED` (1020)
+   - `RN_ERROR_LOGGER_NODE_ID_ALREADY_SET` (1021)
+   - `RN_ERROR_LOGGER_INVALID_NODE_ID` (1022)
+   - `RN_ERROR_LOGGER_INVALID_LEVEL` (1023)
+
+4. **Updated internal logger usage** in 5 places:
+   - KeysInner: `get_global_logger().with_component(Component::Keys)`
+   - QuicTransport: `get_global_logger().with_component(Component::Transporter)`
+   - CA Node: `get_global_logger().with_component(Component::Keys)`
+   - CA Server: `get_global_logger().with_component(Component::Transporter)`
+   - CA Client: `get_global_logger().with_component(Component::Transporter)`
+
+### Implementation Benefits
+- ✅ **Simplified FFI API** - No logger parameters needed
+- ✅ **Consistent logging** - All components use same root logger
+- ✅ **Hierarchical structure** - Proper parent-child logger relationships
+- ✅ **Thread-safe** - Global logger management with OnceCell
+- ✅ **Easy configuration** - Set node ID and log level once
+- ✅ **Backward compatible** - Old `rn_set_log_level` still works (deprecated)
+
+## Helper Functions, Test Data Creation, Async Handling, Negative and Performance Tests
+
+### 6.1 Test Helper Functions (Rust test harness utilities)
+- `fn create_test_logger() -> *mut c_void`
+  - Construct `Arc<Logger>` and return opaque pointer.
+  - Used by: (not needed; logger is global)
+- `fn create_test_error() -> RnError`
+  - Return zeroed `RnError` struct for FFI calls; pass `&mut err` everywhere.
+- `fn create_test_ecdsa_key_pair() -> Vec<u8>`
+  - Build P-256 keypair DER; used for Issuing CA and admin tests.
+- `fn create_test_certificate() -> Vec<u8>`
+  - Return DER certificate bytes (for invalid-cert negative tests).
+- `fn create_test_ea_public_keys() -> Vec<u8>`
+  - CBOR `Vec<Vec<u8>>` of EA public keys. Input for `rn_keys_ca_node_configure_enrollment_authority` or `rn_keys_ca_node_setup_complete`.
+- `fn create_cstring(s: &str) -> CString`
+  - Build CStr for addresses, network_id, admin_ski, etc.
+
+### 6.2 Test Data Creation (precise usage)
+- `fn create_root_ca_certificate() -> Vec<u8>`
+  - (not needed) Issuer and root are created internally via `rn_keys_ca_node_setup_complete`.
+- `fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>)`
+  - `(issuing_key_der, issuing_cert_der)`; pass to `rn_keys_ca_node_install_issuing_ca`.
+- `fn create_enrollment_token(network_id: &str, token_id: &str) -> Vec<u8>`
+  - CBOR `EnrollmentToken`; embed in `CsrEnrollRequest` passed to `rn_transport_ca_client_enroll`.
+- `fn create_test_csr(node_keys: *mut c_void) -> Vec<u8>`
+  - Calls `rn_keys_node_generate_csr` and returns the DER.
+
+### 6.3 Async Handling Strategy (CRITICAL)
+- All FFI are synchronous; async work is executed via a **single, shared Tokio runtime**.
+- **Root cause of QUIC handshake failures**: Multiple FFI functions create ad-hoc `Runtime::new()` per call, breaking QUIC/TLS state continuity.
+- **Solution**: Use existing global runtime pattern:
+  ```rust
+  static RUNTIME: OnceCell<Runtime> = OnceCell::new();
+  fn runtime() -> &'static Runtime { 
+      RUNTIME.get_or_init(|| Runtime::new().expect("tokio runtime")) 
+  }
+  ```
+- **Replace all local `Runtime::new()`** with `runtime().block_on(...)` and `runtime().spawn(...)`.
+- **Threading model for Swift/Kotlin**: FFI entrypoints remain synchronous; they run futures on the shared multi-thread Tokio runtime via `block_on`.
+- **Long-running services**: Server should spawn background tasks on `runtime()` and return immediately (addresses persisted in wrapper).
+- **Critical**: Do NOT hold locks across await - clone data (e.g., `Arc<RwLock<_>>` read → clone values) before `runtime().block_on` to avoid deadlocks.
+- **State consistency**: Once created, reject further config mutations to avoid state races.
+- Tests should call FFI serially. No external runtimes required.
+- Server readiness is ensured via `rn_transport_ca_server_get_*_addr`; short sleeps used only in rate-limit loops.
+
+### 6.4 Negative Test Cases (explicit API usage)
+- `test_invalid_enrollment_token()`
+  - Token: wrong `network_id` or expired.
+  - Call `rn_transport_ca_client_enroll(...)` → expect error; read `rn_last_error`.
+- `test_unauthorized_renewal()`
+  - Fresh node (no prior install), CSR via `rn_keys_node_generate_csr`.
+  - Call `rn_transport_ca_client_renew(...)` → expect error.
+- `test_rate_limit_exceeded()`
+  - 6 enroll calls with same token via `rn_transport_ca_client_enroll` in 1-minute window; last returns error.
+- `test_invalid_certificate()`
+  - Craft invalid `NodeCertificateMessage` CBOR and call `rn_keys_node_install_certificate` → expect error.
+
+### 6.5 Performance Validation
+- Time each FFI network call (enroll/renew/revoke/status/chain/crl) and assert under budget.
+- Burst tests: 100 enroll calls with distinct tokens; record p50/p95.
+- Memory: after each FFI that returns buffers, free via `rn_free`/`rn_string_free` and check for leaks.
+- Resilience: loop start/stop server while making client calls; enforce 45s test timeouts to catch deadlocks.
+
+All above use only the FFI APIs listed in the Authoritative Surface.
+
+---
+
+## Lessons Learned: FFI API Design Consistency
+
+### Critical Issue: Handle Type Inconsistency
+
+**Problem**: The original FFI API had a fundamental design flaw where different functions expected different handle types for the same object:
+
+- `rn_keys_ca_node_new` returned raw `CANode*` (Box<CANode>)
+- Most functions expected raw `CANode*` 
+- But `rn_keys_ca_node_add_admin_ski` expected shared `Arc<RwLock<CANode>>*`
+- This caused memory layout corruption and crashes when raw handles were passed to functions expecting shared handles
+
+**Root Cause**: Mixed handle types for the same object created an inconsistent API where the same handle couldn't be used for all operations.
+
+**Solution**: **Consistent Shared Handle API**
+- Remove `rn_keys_ca_node_new` (raw handle creation)
+- Rename `rn_keys_ca_node_create_shared` to `rn_keys_ca_node_new_shared` (primary creation function)
+- Update ALL CA Node functions to expect shared `Arc<RwLock<CANode>>*` handles
+- No backward compatibility - full refactor for consistency
+
+### Key Design Principles
+
+1. **Single Handle Type Per Object**: Each FFI object should have exactly one handle type used consistently across all functions
+2. **Thread Safety by Default**: Use shared handles (`Arc<RwLock<T>>`) for objects that may be accessed from multiple contexts
+3. **No Mixed APIs**: Never mix raw and shared handles for the same object type
+4. **Consistent Naming**: Use clear naming that indicates handle type (e.g., `_shared` suffix)
+5. **No Backward Compatibility for Broken APIs**: If the API is fundamentally flawed, fix it completely rather than maintaining compatibility
+
+### Implementation Guidelines
+
+1. **Handle Type Decision Matrix**:
+   - **Raw handles** (`Box<T>`) - For simple, single-threaded objects with no shared access
+   - **Shared handles** (`Arc<RwLock<T>>`) - For objects that may be accessed from multiple contexts or need thread safety
+
+2. **API Consistency Checklist**:
+   - [ ] All functions for an object type use the same handle type
+   - [ ] Creation function returns the same handle type expected by all other functions
+   - [ ] Naming clearly indicates handle type
+   - [ ] Documentation specifies handle type requirements
+   - [ ] Tests use consistent handle types throughout
+
+3. **Memory Management**:
+   - Each handle type has exactly one corresponding free function
+   - Free functions match the handle type (e.g., `free_shared` for shared handles)
+   - No mixing of allocation/deallocation strategies
+
+### Prevention Strategies
+
+1. **Design Review**: Always review handle type consistency when adding new FFI functions
+2. **Type Safety**: Use Rust's type system to prevent handle type mismatches
+3. **Documentation**: Clearly document handle type requirements for each function
+4. **Testing**: Test handle type consistency across all function combinations
+5. **Code Review**: Check for handle type consistency in all FFI code reviews
+
+### Future Considerations
+
+- Consider using Rust's type system to create distinct handle types (e.g., `RawCANodeHandle` vs `SharedCANodeHandle`)
+- Use compile-time checks to prevent handle type mismatches
+- Consider using macros or code generation to ensure handle type consistency
+- Document handle type decisions and rationale for future reference
+
+### 6.6 CA Client Configuration and EA Key Consistency (Critical)
+
+Root cause to avoid: using different Enrollment Authority (EA) keys for server configuration and token signing. The same EA keypair MUST be used to:
+- Configure the CA Node (EA public keys)
+- Sign enrollment tokens (EA private key)
+
+Recommended test helper:
+- `fn create_enrollment_authority() -> (ea_private_key_der: Vec<u8>, ea_public_key_bytes: Vec<u8>)`
+
+Exact FFI sequence and checklist:
+1) Generate EA once and keep in shared test context:
+   - `(ea_sk_der, ea_pk) = create_enrollment_authority()`
+2) Configure CA Node with EA public keys:
+   - `ea_pubkeys_cbor = cbor::to_vec(vec![ea_pk])`
+   - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_pubkeys_cbor.as_ptr(), ea_pubkeys_cbor.len(), &mut err)`
+   - Alternatively, pass the same `ea_pubkeys_cbor` to `rn_keys_ca_node_setup_complete`.
+3) Create tokens with the SAME EA private key:
+   - `token_cbor = create_enrollment_token_with_sk(ea_sk_der, body)`
+   - Embed `token_cbor` in `CsrEnrollRequest` CBOR for `rn_transport_ca_client_enroll`.
+4) Network alignment:
+   - Ensure `network_id` in token body matches CA Server config `network_id` and the request payloads.
+5) Address usage:
+   - Use `rn_transport_ca_server_get_bootstrap_addr` for enroll.
+   - Use `rn_transport_ca_server_get_authenticated_addr` for renew/revoke/status/crl.
+6) CA Client trust anchors (required for REAL QUIC mTLS):
+   - Trust anchors are set via the `CaClientConfigAll` CBOR structure when creating the client with `rn_transport_ca_client_new_with_config`
+   - The `root_ca_der` and `issuing_ca_der` fields in the config provide the trust anchors
+7) Node identity for client-auth operations:
+   - Node key material is provided via the `node_keys` parameter when creating the client with `rn_transport_ca_client_new_with_config`
+8) Sanity checks before enroll:
+   - Compute `signer_id` from `ea_pk` (e.g., compact-id) and assert it matches `EnrollmentToken.signer_id`.
+   - Confirm token validity window and permissions include "enroll".
+
+By following the above, the same EA keypair is threaded through both server and client sides, preventing mismatches that cause token validation failures.
+
+### 6.7 Tokio Runtime Management (CRITICAL FIX)
+
+**Problem**: QUIC handshake timeouts in FFI tests due to per-call runtime creation breaking QUIC/TLS state continuity.
+
+**Root Cause**: Multiple FFI functions create ad-hoc `Runtime::new()` per call, while QUIC/TLS state must live on a single runtime.
+
+**Solution**: Use single, shared Tokio runtime for all async operations in FFI.
+
+#### Implementation Pattern
+```rust
+// Global runtime (already exists in lib.rs)
+static RUNTIME: OnceCell<Runtime> = OnceCell::new();
+fn runtime() -> &'static Runtime { 
+    RUNTIME.get_or_init(|| Runtime::new().expect("tokio runtime")) 
+}
+
+// Replace all local Runtime::new() with:
+runtime().block_on(async_operation)
+runtime().spawn(background_task)
+```
+
+#### Functions to Fix
+- **CA Server**:
+  - `rn_transport_ca_server_start`: Use `runtime().block_on(wrapper.server.start())`
+  - `rn_transport_ca_server_stop`: Use `runtime().block_on(wrapper.server.stop())`
+- **CA Client**:
+  - `rn_transport_ca_client_enroll`: Use `runtime().block_on(client.enroll(...))`
+  - `rn_transport_ca_client_renew`: Use `runtime().block_on(client.renew(...))`
+  - `rn_transport_ca_client_revoke`: Use `runtime().block_on(client.revoke(...))`
+  - `rn_transport_ca_client_get_chain`: Use `runtime().block_on(client.get_chain(...))`
+  - `rn_transport_ca_client_get_status`: Use `runtime().block_on(client.get_status(...))`
+  - `rn_transport_ca_client_get_crl`: Use `runtime().block_on(client.get_crl(...))`
+
+#### Critical Rules
+1. **No per-call runtimes**: Replace all `Runtime::new()` with `runtime()`
+2. **No lock holding across await**: Clone `Arc<RwLock<_>>` values before `block_on`
+3. **Single runtime for QUIC**: All QUIC objects created and used on shared runtime
+4. **State consistency**: Reject config mutations after creation
+5. **Background tasks**: Spawn long-running tasks on `runtime()` and return immediately
+
+#### Threading Model for Swift/Kotlin
+- FFI entrypoints remain synchronous
+- All async work runs on shared multi-thread Tokio runtime via `block_on`
+- No nested runtimes or external runtime management required
+- Matches how Rust test runs under single runtime

@@ -46,6 +46,7 @@ describe('Discovery Basic Tests', () => {
     // Test that we have valid keys for discovery operations
     // This matches the Rust test pattern of validating key setup
     const mobilePk = mobileKeys.mobileGetUserPublicKey();
+    nodeKeys.nodeGenerateKeys(); // Generate keys after initialization
     const nodePk = nodeKeys.nodeGetPublicKey();
     const nodeAgreementPk = nodeKeys.nodeGetAgreementPublicKey();
 
@@ -77,9 +78,15 @@ describe('Discovery Basic Tests', () => {
     const testPk = Buffer.alloc(65, 0x42); // Use valid key format
     expect(() => mobileKeys.mobileInstallNetworkPublicKey(testPk)).not.toThrow();
 
-    const networkPk = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
-    expect(networkPk instanceof Uint8Array).toBe(true);
-    expect(networkPk.length).toBeGreaterThan(0);
+    // Generate a network key pair for the mobile keys to have a private key
+    const mobileNetworkKey = mobileKeys.mobileGenerateNetworkDataKey();
+    expect(mobileNetworkKey instanceof Uint8Array).toBe(true);
+    expect(mobileNetworkKey.length).toBeGreaterThan(0);
+
+    // Now check if the mobile keys have a network private key for the generated public key
+    const networkPk = mobileKeys.mobileHasNetworkPrivateKey(mobileNetworkKey);
+    expect(typeof networkPk).toBe('boolean');
+    expect(networkPk).toBe(true);
 
     console.log('   ✅ Network setup for discovery successful');
   }, 30000);

@@ -5,8 +5,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
-use std::path::Path;
-use uuid::Uuid;
+use std::path::{Path, PathBuf};
 
 /// Node configuration stored in the config file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,8 +19,8 @@ pub struct NodeConfig {
     /// Additional network IDs this node participates in
     pub network_ids: Vec<String>,
 
-    /// Keys name for OS key store (format: runar_{uuid})
-    pub keys_name: String,
+    /// Persistence directory for device keystore
+    pub persistence_dir: PathBuf,
 
     /// Node public key (for reference)
     pub node_public_key: String,
@@ -59,14 +58,13 @@ impl NodeConfig {
         default_network_id: String,
         node_public_key: String,
         setup_server: SetupServerConfig,
+        persistence_dir: PathBuf,
     ) -> Self {
-        let keys_name = format!("runar_{}", Uuid::new_v4());
-
         Self {
             node_id,
             default_network_id,
             network_ids: Vec::new(),
-            keys_name,
+            persistence_dir,
             node_public_key,
             setup_server,
             request_timeout_ms: 30000, // 30 seconds

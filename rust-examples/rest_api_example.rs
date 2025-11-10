@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_node::services::RequestContext;
 
 // Define a simple invoice service
@@ -58,7 +58,7 @@ impl InvoiceService {
         let invoices = self.invoices.read().await;
         Ok(invoices.values().cloned().collect())
     }
-    
+
     #[action]
     pub async fn get_invoice(&self, id: Uuid) -> Result<Invoice> {
         let invoices = self.invoices.read().await;
@@ -67,7 +67,7 @@ impl InvoiceService {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Invoice not found"))
     }
-    
+
     #[action]
     pub async fn create_invoice(&self, req: CreateInvoiceRequest) -> Result<Invoice> {
         let invoice = Invoice {
@@ -77,44 +77,44 @@ impl InvoiceService {
             paid: false,
             due_date: req.due_date,
         };
-        
+
         let mut invoices = self.invoices.write().await;
         invoices.insert(invoice.id, invoice.clone());
-        
+
         Ok(invoice)
     }
-    
+
     #[action]
     pub async fn update_invoice(&self, id: Uuid, req: UpdateInvoiceRequest) -> Result<Invoice> {
         let mut invoices = self.invoices.write().await;
-        
+
         let invoice = invoices
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("Invoice not found"))?;
-        
+
         if let Some(amount) = req.amount {
             invoice.amount = amount;
         }
-        
+
         if let Some(paid) = req.paid {
             invoice.paid = paid;
         }
-        
+
         if let Some(due_date) = req.due_date {
             invoice.due_date = due_date;
         }
-        
+
         Ok(invoice.clone())
     }
-    
+
     #[action]
     pub async fn delete_invoice(&self, id: Uuid) -> Result<()> {
         let mut invoices = self.invoices.write().await;
-        
+
         invoices
             .remove(&id)
             .ok_or_else(|| anyhow::anyhow!("Invoice not found"))?;
-        
+
         Ok(())
     }
 }
@@ -154,7 +154,7 @@ impl CustomerService {
         let customers = self.customers.read().await;
         Ok(customers.values().cloned().collect())
     }
-    
+
     #[action]
     pub async fn get_customer(&self, id: String) -> Result<Customer> {
         let customers = self.customers.read().await;
@@ -163,7 +163,7 @@ impl CustomerService {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Customer not found"))
     }
-    
+
     #[action]
     pub async fn create_customer(&self, req: CreateCustomerRequest) -> Result<Customer> {
         let customer = Customer {
@@ -171,10 +171,10 @@ impl CustomerService {
             name: req.name,
             email: req.email,
         };
-        
+
         let mut customers = self.customers.write().await;
         customers.insert(customer.id.clone(), customer.clone());
-        
+
         Ok(customer)
     }
 }
@@ -198,7 +198,7 @@ impl ApiGateway {
         // This would typically make a request to the invoice service
         Ok(vec![])
     }
-    
+
     #[action]
     async fn get_invoice(&self, id: Uuid) -> Result<Invoice> {
         // This would typically make a request to the invoice service
@@ -210,7 +210,7 @@ impl ApiGateway {
             due_date: "2024-12-31".to_string(),
         })
     }
-    
+
     #[action]
     async fn create_invoice(&self, req: CreateInvoiceRequest) -> Result<Invoice> {
         // This would typically make a request to the invoice service
@@ -222,7 +222,7 @@ impl ApiGateway {
             due_date: req.due_date,
         })
     }
-    
+
     #[action]
     async fn update_invoice(&self, id: Uuid, req: UpdateInvoiceRequest) -> Result<Invoice> {
         // This would typically make a request to the invoice service
@@ -234,7 +234,7 @@ impl ApiGateway {
             due_date: req.due_date.unwrap_or_else(|| "2024-12-31".to_string()),
         })
     }
-    
+
     #[action]
     async fn delete_invoice(&self, id: Uuid) -> Result<()> {
         // This would typically make a request to the invoice service
@@ -250,7 +250,7 @@ impl ApiGateway {
         // This would typically make a request to the customer service
         Ok(vec![])
     }
-    
+
     #[action]
     async fn get_customer(&self, id: String) -> Result<Customer> {
         // This would typically make a request to the customer service
@@ -260,7 +260,7 @@ impl ApiGateway {
             email: "john@example.com".to_string(),
         })
     }
-    
+
     #[action]
     async fn create_customer(&self, req: CreateCustomerRequest) -> Result<Customer> {
         // This would typically make a request to the customer service
@@ -276,28 +276,28 @@ impl ApiGateway {
 async fn main() -> Result<()> {
     // Setup logging
     let logger = Arc::new(Logger::new_root(Component::System, "rest-api-example"));
-    
+
     logger.info("🚀 Starting REST API Example");
-    
+
     // Create a node
     let  node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
-    
+
     // Create and register services
     let invoice_service = InvoiceService::new();
     let customer_service = CustomerService::new();
     let api_gateway = ApiGateway::new();
-    
+
     node.add_service(invoice_service).await?;
     node.add_service(customer_service).await?;
     node.add_service(api_gateway).await?;
-    
+
     // Create and register the HTTP gateway
     let http_gateway = GatwayService::new("REST API Gateway", "gateway");
     node.add_service(http_gateway).await?;
-    
+
     // Start the node
     node.start().await?;
-    
+
     logger.info("✅ REST API example started successfully!");
     logger.info("🌐 HTTP gateway should be available at http://localhost:3000");
     logger.info("📡 Services registered:");
@@ -314,10 +314,10 @@ async fn main() -> Result<()> {
     logger.info("   - GET /customer_service/get_customers");
     logger.info("   - GET /customer_service/get_customer/{id}");
     logger.info("   - POST /customer_service/create_customer");
-    
+
     // Keep the node running
     tokio::signal::ctrl_c().await?;
     logger.info("🛑 Shutting down...");
-    
+
     Ok(())
-} 
+}

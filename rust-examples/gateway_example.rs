@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_node::services::RequestContext;
 
 // Define a simple user service
@@ -49,7 +49,7 @@ impl UserService {
         let users = self.users.read().await;
         Ok(users.values().cloned().collect())
     }
-    
+
     #[action]
     pub async fn get_user(&self, id: Uuid) -> Result<User> {
         let users = self.users.read().await;
@@ -58,7 +58,7 @@ impl UserService {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("User not found"))
     }
-    
+
     #[action]
     pub async fn create_user(&self, req: CreateUserRequest) -> Result<User> {
         let user = User {
@@ -66,10 +66,10 @@ impl UserService {
             username: req.username,
             email: req.email,
         };
-        
+
         let mut users = self.users.write().await;
         users.insert(user.id, user.clone());
-        
+
         Ok(user)
     }
 }
@@ -93,7 +93,7 @@ impl ApiGateway {
         // For now, return empty list
         Ok(vec![])
     }
-    
+
     #[action]
     async fn create_user(&self, req: CreateUserRequest) -> Result<User> {
         // This would typically make a request to the user service
@@ -104,7 +104,7 @@ impl ApiGateway {
             email: req.email,
         })
     }
-    
+
     #[action]
     async fn get_user(&self, id: Uuid) -> Result<User> {
         // This would typically make a request to the user service
@@ -121,36 +121,36 @@ impl ApiGateway {
 async fn main() -> Result<()> {
     // Setup logging
     let logger = Arc::new(Logger::new_root(Component::System, "gateway-example"));
-    
+
     logger.info("🚀 Starting Gateway Example");
-    
+
     // Create a node
     let  node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
-    
+
     // Create and register services
     let user_service = UserService::new();
     let api_gateway = ApiGateway::new();
-    
+
     node.add_service(user_service).await?;
     node.add_service(api_gateway).await?;
-    
+
     // Create and register the HTTP gateway
     let http_gateway = GatwayService::new("HTTP Gateway", "gateway");
     node.add_service(http_gateway).await?;
-    
+
     // Start the node
     node.start().await?;
-    
+
     logger.info("✅ Gateway example started successfully!");
     logger.info("🌐 HTTP gateway should be available at http://localhost:3000");
     logger.info("📡 Services registered:");
     logger.info("   - user_service");
     logger.info("   - api_gateway");
     logger.info("   - HTTP gateway");
-    
+
     // Keep the node running
     tokio::signal::ctrl_c().await?;
     logger.info("🛑 Shutting down...");
-    
+
     Ok(())
-} 
+}

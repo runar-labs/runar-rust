@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-use libc::{c_char, c_void};
+use libc::c_void;
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use runar_ffi::*;
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
@@ -22,7 +22,7 @@ fn linux_keystore_minimal_network_key_crash_repro() {
             rn_keys_new(&mut keys, &mut err as *mut _),
             0,
             "rn_keys_new failed: {}",
-            last_err()
+            ""
         );
         assert!(!keys.is_null(), "rn_keys_new returned null handle");
 
@@ -31,7 +31,7 @@ fn linux_keystore_minimal_network_key_crash_repro() {
             rn_keys_init_as_mobile(keys, &mut err),
             0,
             "init_as_mobile failed: {}",
-            last_err()
+            ""
         );
 
         // 3) rn_keys_register_linux_device_keystore with unique account
@@ -41,7 +41,7 @@ fn linux_keystore_minimal_network_key_crash_repro() {
             rn_keys_register_linux_device_keystore(keys, svc.as_ptr(), acc.as_ptr(), &mut err),
             0,
             "register linux keystore failed: {}",
-            last_err()
+            ""
         );
 
         // 4) rn_keys_set_persistence_dir to a unique temp directory
@@ -64,25 +64,11 @@ fn linux_keystore_minimal_network_key_crash_repro() {
         let mut nid_len: usize = 0;
         let rc =
             rn_keys_mobile_generate_network_data_key(keys, &mut nid_ptr, &mut nid_len, &mut err);
-        assert_eq!(rc, 0, "generate_network_data_key failed: {}", last_err());
+        assert_eq!(rc, 0, "generate_network_data_key failed: {}", "");
         if !nid_ptr.is_null() {
             rn_free(nid_ptr, nid_len);
         }
 
         rn_keys_free(keys);
-    }
-}
-
-#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-fn last_err() -> String {
-    unsafe {
-        let mut buf = vec![0u8; 256];
-        let rc = rn_last_error(buf.as_mut_ptr() as *mut c_char, buf.len());
-        if rc == 0 {
-            let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-            String::from_utf8_lossy(&buf[..nul]).to_string()
-        } else {
-            String::new()
-        }
     }
 }

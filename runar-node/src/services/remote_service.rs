@@ -13,9 +13,9 @@ use uuid::Uuid;
 use crate::services::abstract_service::AbstractService;
 
 use crate::services::{ActionHandler, LifecycleContext, RemoteLifecycleContext};
-use runar_common::logging::Logger;
 use runar_common::routing::TopicPath;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::{
     traits::{LabelResolverConfig, ResolverCache},
@@ -33,8 +33,6 @@ pub struct RemoteService {
     pub service_topic: TopicPath,
     pub version: String,
     pub description: String,
-    /// Network public key for this service
-    pub network_public_key: Vec<u8>,
 
     /// Remote peer information
     peer_node_id: String,
@@ -86,16 +84,11 @@ pub struct CreateRemoteServicesConfig {
 impl RemoteService {
     /// Create a new RemoteService instance
     pub fn new(config: RemoteServiceConfig, dependencies: RemoteServiceDependencies) -> Self {
-        let _network_id = config.service_topic.network_id();
-        // For now, we'll use a placeholder network public key
-        // TODO: This should be resolved from the keystore or passed in
-        let network_public_key = vec![0u8; 32]; // Placeholder
         Self {
             name: config.name,
             service_topic: config.service_topic,
             version: config.version,
             description: config.description,
-            network_public_key, // TODO: Should be resolved from keystore
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
             actions: Arc::new(DashMap::new()),
@@ -248,7 +241,15 @@ impl RemoteService {
                     "🚀 [RemoteService] Starting remote request - Action: {action} Target: {peer_node_id}"
                 );
 
-                let profile_public_keys = request_context.user_profile_public_keys.clone();
+                // let profile_public_keys = request_context.user_profile_public_keys.clone();
+
+                let metadata = request_context.metadata.clone();
+                let profile_public_keys: Vec<Vec<u8>>;
+                if let Some(profile_public_keys_arc) = metadata.get("profile_public_keys") {
+                    profile_public_keys = profile_public_keys_arc.as_type::<Vec<Vec<u8>>>()?;
+                } else {
+                    return Err(anyhow::anyhow!("Profile public keys not found in metadata"));
+                }
 
                 // Send the request
                 let topic_path_str = action_topic_path.as_str();
@@ -324,6 +325,17 @@ impl RemoteService {
         self.actions
             .iter()
             .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get all action metadata for this remote service
+    ///
+    /// INTENTION: Provide a way to get the full action metadata for service discovery
+    /// and introspection purposes.
+    pub fn get_actions_metadata(&self) -> Vec<ActionMetadata> {
+        self.actions
+            .iter()
+            .map(|entry| entry.value().clone())
             .collect()
     }
 

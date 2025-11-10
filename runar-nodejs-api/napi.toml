@@ -1,0 +1,19 @@
+[package]
+name = "runar-nodejs-api"
+version = "0.1.0"
+description = "Runar NodeJS API"
+license = "MIT"
+repository = "https://github.com/runar-rust/runar-nodejs-api"
+
+[build]
+target = "aarch64-apple-darwin"
+platform = "darwin"
+arch = "arm64"
+features = ["napi4"]
+
+[package.metadata.napi]
+name = "runar-nodejs-api"
+version = "0.1.0"
+description = "Runar NodeJS API"
+license = "MIT"
+repository = "https://github.com/runar-rust/runar-nodejs-api"

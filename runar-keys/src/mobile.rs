@@ -14,20 +14,20 @@ use crate::keystore::{
     DeviceKeystore, DeviceKeystoreCaps,
 };
 use crate::EnvelopeCrypto;
-use crate::{log_debug, log_error, log_info};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
 use rand::thread_rng;
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::Logger;
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Setup token from a node requesting a certificate
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetupToken {
     /// Node's public key for identity
     pub node_public_key: Vec<u8>,
@@ -385,16 +385,8 @@ impl MobileKeyManager {
         out
     }
 
-    pub fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
-        // Direct access - validate we have the private key for this public key
-        if self.network_data_keys.contains_key(network_public_key) {
-            Ok(network_public_key.to_vec())
-        } else {
-            Err(KeyError::KeyNotFound(format!(
-                "Network private key not found for public key: {} bytes",
-                network_public_key.len()
-            )))
-        }
+    pub fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
+        self.network_data_keys.contains_key(network_public_key)
     }
 
     /// Get network public key by network ID (for backward compatibility)
@@ -409,6 +401,69 @@ impl MobileKeyManager {
         Err(KeyError::KeyNotFound(format!(
             "Network key not found for network ID: {network_id}"
         )))
+    }
+
+    /// Convert CA Node enrollment response to NodeCertificateMessage
+    pub fn from_enroll_response(
+        &self,
+        response: &crate::ca_node_types::CsrEnrollResponse,
+    ) -> Result<NodeCertificateMessage> {
+        // Parse the device certificate
+        let device_cert = X509Certificate::from_der(response.certificate_der.clone())?;
+
+        // Parse the issuing CA certificate
+        let issuing_ca_cert = X509Certificate::from_der(response.issuing_ca_der.clone())?;
+
+        // Parse root CA certificate if present (not used in this implementation)
+        let _root_ca_cert = if let Some(root_der) = &response.root_ca_der {
+            X509Certificate::from_der(root_der.clone())?
+        } else {
+            issuing_ca_cert.clone() // Use issuing CA as root if no root provided
+        };
+
+        // Create metadata
+        let metadata = CertificateMetadata {
+            issued_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            validity_days: 30, // Default from CA Node
+            purpose: "Node TLS Certificate".to_string(),
+        };
+
+        Ok(NodeCertificateMessage {
+            node_certificate: device_cert,
+            ca_certificate: issuing_ca_cert,
+            metadata,
+        })
+    }
+
+    /// Convert CA Node renewal response to NodeCertificateMessage
+    pub fn from_renew_response(
+        &self,
+        response: &crate::ca_node_types::RenewResponse,
+    ) -> Result<NodeCertificateMessage> {
+        // Parse the renewed certificate
+        let renewed_cert = X509Certificate::from_der(response.certificate_der.clone())?;
+
+        // Parse the issuing CA certificate
+        let issuing_ca_cert = X509Certificate::from_der(response.issuing_ca_der.clone())?;
+
+        // Create metadata
+        let metadata = CertificateMetadata {
+            issued_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            validity_days: 30, // Default from CA Node
+            purpose: "Node TLS Certificate (Renewed)".to_string(),
+        };
+
+        Ok(NodeCertificateMessage {
+            node_certificate: renewed_cert,
+            ca_certificate: issuing_ca_cert,
+            metadata,
+        })
     }
 
     /// Generate a network data key for envelope encryption and return the public key bytes
@@ -896,7 +951,7 @@ impl MobileKeyManager {
         Ok(envelope_data.encrypted_data)
     }
 
-    /// Encrypt data for a network (legacy method for compatibility)  
+    /// Encrypt data for a network (legacy method for compatibility)
     pub fn encrypt_for_network(&self, data: &[u8], network_public_key: &[u8]) -> Result<Vec<u8>> {
         // Use envelope encryption with the provided public key
         let envelope_data =
@@ -1038,7 +1093,7 @@ impl EnvelopeCrypto for MobileKeyManager {
         self.decrypt_with_network(env)
     }
 
-    fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+    fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
         MobileKeyManager::has_network_private_key(self, network_public_key)
     }
 

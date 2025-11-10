@@ -1,9 +1,25 @@
 use runar_ffi::*;
-use serde_cbor::Value;
 use std::ffi::CString;
 
-// Import common utilities
-mod common;
+/// Create simple transport options with just bind_addr and max_message_size
+fn create_simple_transport_options_cbor(bind_addr: &str, max_message_size: usize) -> Vec<u8> {
+    use runar_ffi::QuicTransportOptionsConfig;
+    use serde_cbor;
+
+    let options = QuicTransportOptionsConfig {
+        bind_addr: Some(bind_addr.to_string()),
+        handshake_timeout_ms: None,
+        open_stream_timeout_ms: None,
+        max_message_size: Some(max_message_size),
+        response_cache_ttl_ms: None,
+        max_request_retries: None,
+        cert_chain_der: Vec::new(),
+        private_key_der: None,
+        root_certs_der: Vec::new(),
+    };
+
+    serde_cbor::to_vec(&options).expect("Failed to serialize transport options")
+}
 
 #[repr(C)]
 struct RnError {
@@ -14,13 +30,20 @@ struct RnError {
 // no-op: legacy callback removed in favor of push-based API
 
 #[test]
-#[ignore] // TODO: Enable when transport integration is implemented
 fn two_transports_request_response() {
     unsafe {
         let mut err = RnError {
             code: 0,
             message: std::ptr::null(),
         };
+
+        // Set up logging to match Swift test
+        assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0); // 5 = trace level
+        let node_id = std::ffi::CString::new("two-transports-test").unwrap();
+        assert_eq!(
+            rn_set_logger_context(node_id.as_ptr(), &mut err as *mut _ as *mut _),
+            0
+        );
 
         let mut keys_a: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys_a, &mut err as *mut _ as *mut _), 0);
@@ -31,6 +54,9 @@ fn two_transports_request_response() {
             0
         );
 
+        // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+        // Keys are automatically generated when needed
+
         // Create second node keys for B
         let mut keys_b: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys_b, &mut err as *mut _ as *mut _), 0);
@@ -38,6 +64,9 @@ fn two_transports_request_response() {
             rn_keys_init_as_node(keys_b, &mut err as *mut _ as *mut _),
             0
         );
+
+        // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+        // Keys are automatically generated when needed
 
         // Set node info for B
         let info = runar_schemas::NodeInfo {
@@ -51,10 +80,16 @@ fn two_transports_request_response() {
             version: 0,
         };
         let info_buf = serde_cbor::to_vec(&info).unwrap();
-        assert_eq!(
-            rn_keys_set_local_node_info(keys_b, info_buf.as_ptr(), info_buf.len()),
-            0
+        println!("Rust CBOR data length: {}", info_buf.len());
+        println!(
+            "Rust CBOR data: {}",
+            info_buf
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ")
         );
+        // Note: NodeInfo will be set on transport after creation
 
         // Create mobile keys for processing setup tokens
         let mut keys_c: *mut std::ffi::c_void = std::ptr::null_mut();
@@ -64,11 +99,7 @@ fn two_transports_request_response() {
             0
         );
 
-        // Set node info for A
-        assert_eq!(
-            rn_keys_set_local_node_info(keys_a, info_buf.as_ptr(), info_buf.len()),
-            0
-        );
+        // Note: NodeInfo will be set on transport after creation
 
         let mut p: *mut u8 = std::ptr::null_mut();
         let mut l: usize = 0;
@@ -124,22 +155,14 @@ fn two_transports_request_response() {
         );
         rn_free(ncm_p2, ncm_l2);
 
-        let mut omap = std::collections::BTreeMap::<Value, Value>::new();
-        omap.insert(
-            Value::Text("bind_addr".into()),
-            Value::Text("127.0.0.1:0".into()),
-        );
-        omap.insert(
-            Value::Text("max_message_size".into()),
-            Value::Integer(65536),
-        );
-        let options = Value::Map(omap);
-        let buf = serde_cbor::to_vec(&options).unwrap();
+        let buf = create_simple_transport_options_cbor("127.0.0.1:0", 65536);
 
         let mut ta: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(
             rn_transport_new_with_keys(
                 keys_a,
+                info_buf.as_ptr(),
+                info_buf.len(),
                 buf.as_ptr(),
                 buf.len(),
                 &mut ta,
@@ -163,6 +186,8 @@ fn two_transports_request_response() {
         assert_eq!(
             rn_transport_new_with_keys(
                 keys_b,
+                info_buf.as_ptr(),
+                info_buf.len(),
                 buf.as_ptr(),
                 buf.len(),
                 &mut tb,
@@ -171,6 +196,26 @@ fn two_transports_request_response() {
             0
         );
         assert_eq!(rn_transport_start(tb, &mut err as *mut _ as *mut _), 0);
+
+        // Set NodeInfo for both transports
+        assert_eq!(
+            rn_transport_set_local_node_info(
+                ta,
+                info_buf.as_ptr(),
+                info_buf.len(),
+                &mut err as *mut _ as *mut _
+            ),
+            0
+        );
+        assert_eq!(
+            rn_transport_set_local_node_info(
+                tb,
+                info_buf.as_ptr(),
+                info_buf.len(),
+                &mut err as *mut _ as *mut _
+            ),
+            0
+        );
 
         let mut pk_out: *mut u8 = std::ptr::null_mut();
         let mut pk_len: usize = 0;
@@ -204,92 +249,75 @@ fn two_transports_request_response() {
         let peer_id = runar_common::compact_ids::compact_id(&peer.public_key);
 
         // Create CBOR request parameters
-        let request_params = serde_cbor::to_vec(&serde_cbor::Value::Map({
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text("/echo".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text("c1".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(b"hello".to_vec()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("dest_peer_id".into()),
-                serde_cbor::Value::Text(peer_id),
-            );
-            map.insert(
-                serde_cbor::Value::Text("network_public_key".into()),
-                serde_cbor::Value::Null,
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_keys".into()),
-                serde_cbor::Value::Array(vec![]),
-            );
-            map
-        }))
+        let request_params = serde_cbor::to_vec(&TransportRequestParams {
+            path: "/echo".to_string(),
+            correlation_id: "c1".to_string(),
+            payload: b"hello".to_vec(),
+            dest_peer_id: peer_id.clone(),
+            network_public_key: None,
+            profile_public_keys: vec![],
+        })
         .unwrap();
 
-        assert_eq!(
-            rn_transport_request(
-                tb,
-                request_params.as_ptr(),
-                request_params.len(),
-                &mut err as *mut _ as *mut _
-            ),
-            0
+        let result = rn_transport_request(
+            tb,
+            request_params.as_ptr(),
+            request_params.len(),
+            &mut err as *mut _ as *mut _,
         );
+        if result != 0 {
+            let error_msg = std::ffi::CStr::from_ptr(err.message).to_string_lossy();
+            panic!("Transport request failed with code {result}: {error_msg}");
+        }
 
         // Handle request on A then complete
         let mut rid_c: Option<CString> = None;
         for _ in 0..50 {
             let mut ev_ptr: *mut u8 = std::ptr::null_mut();
             let mut ev_len: usize = 0;
-            let rc =
-                rn_transport_poll_event(ta, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
+            let rc = rn_transport_poll_request(
+                ta,
+                &mut ev_ptr,
+                &mut ev_len,
+                &mut err as *mut _ as *mut _,
+            );
             assert_eq!(rc, 0);
             if !ev_ptr.is_null() && ev_len > 0 {
-                let v: Value =
+                // Deserialize as TransportRequestEvent
+                let req_event: TransportRequestEvent =
                     serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
                 rn_free(ev_ptr, ev_len);
-                if let Value::Map(m) = v {
-                    let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
-                        Value::Text(s) => Some(s.as_str()),
-                        _ => None,
-                    });
-                    if typ == Some("RequestReceived") {
-                        if let Some(Value::Text(rid)) = m.get(&Value::Text("request_id".into())) {
-                            rid_c = Some(CString::new(rid.as_str()).unwrap());
-                            break;
-                        }
-                    }
-                }
+
+                // Validate source and destination peer IDs are present and correct
+                assert!(
+                    !req_event.source_peer_id.is_empty(),
+                    "Source peer ID should not be empty"
+                );
+                assert!(
+                    !req_event.destination_peer_id.is_empty(),
+                    "Destination peer ID should not be empty"
+                );
+
+                // The source should be the peer that sent the request (B), destination should be the server (A)
+                // We can't easily get the exact peer IDs in this test, but we can verify they're not empty
+                println!(
+                    "Request event - source: {}, dest: {}, path: {}",
+                    req_event.source_peer_id, req_event.destination_peer_id, req_event.path
+                );
+
+                rid_c = Some(CString::new(req_event.request_id.as_str()).unwrap());
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         let rid = rid_c.expect("no request received on server");
 
         // Create CBOR complete request parameters
-        let complete_params = serde_cbor::to_vec(&serde_cbor::Value::Map({
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("request_id".into()),
-                serde_cbor::Value::Text(rid.to_string_lossy().to_string()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("response_payload".into()),
-                serde_cbor::Value::Bytes(b"world".to_vec()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_keys".into()),
-                serde_cbor::Value::Array(vec![]),
-            );
-            map
-        }))
+        let complete_params = serde_cbor::to_vec(&TransportCompleteRequestParams {
+            request_id: rid.to_string_lossy().to_string(),
+            response_payload: b"world".to_vec(),
+            profile_public_keys: vec![],
+        })
         .unwrap();
 
         assert_eq!(
@@ -307,28 +335,72 @@ fn two_transports_request_response() {
         for _ in 0..50 {
             let mut ev_ptr: *mut u8 = std::ptr::null_mut();
             let mut ev_len: usize = 0;
-            let rc =
-                rn_transport_poll_event(tb, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
+            let rc = rn_transport_poll_response(
+                tb,
+                &mut ev_ptr,
+                &mut ev_len,
+                &mut err as *mut _ as *mut _,
+            );
             assert_eq!(rc, 0);
             if !ev_ptr.is_null() && ev_len > 0 {
-                let v: Value =
+                // Deserialize as TransportResponseEvent
+                let _resp_event: TransportResponseEvent =
                     serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
-                if let Value::Map(m) = v {
-                    let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
-                        Value::Text(s) => Some(s.as_str()),
-                        _ => None,
-                    });
-                    if typ == Some("ResponseReceived") {
-                        got_resp = true;
-                        rn_free(ev_ptr, ev_len);
-                        break;
-                    }
-                }
+                got_resp = true;
                 rn_free(ev_ptr, ev_len);
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(got_resp, "did not get response event");
+
+        // Test publish/subscribe flow
+        println!("Testing publish/subscribe flow...");
+
+        // Create CBOR publish parameters
+        let publish_params = serde_cbor::to_vec(&TransportPublishParams {
+            path: "/events/test".to_string(),
+            correlation_id: "pub1".to_string(),
+            payload: b"test event data".to_vec(),
+            dest_peer_id: peer_id.clone(),
+            network_public_key: None,
+        })
+        .unwrap();
+
+        // Publish event from transport B to transport A
+        let publish_result = rn_transport_publish(
+            tb,
+            publish_params.as_ptr(),
+            publish_params.len(),
+            &mut err as *mut _ as *mut _,
+        );
+        if publish_result != 0 {
+            let error_msg = std::ffi::CStr::from_ptr(err.message).to_string_lossy();
+            panic!("Transport publish failed with code {publish_result}: {error_msg}");
+        }
+
+        // Expect event on A
+        let mut got_event = false;
+        for _ in 0..50 {
+            let mut ev_ptr: *mut u8 = std::ptr::null_mut();
+            let mut ev_len: usize = 0;
+            let rc =
+                rn_transport_poll_event(ta, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
+            assert_eq!(rc, 0);
+            if !ev_ptr.is_null() && ev_len > 0 {
+                // Deserialize as TransportEventEvent
+                let event: TransportEventEvent =
+                    serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
+                // Verify the event payload
+                assert_eq!(event.payload, b"test event data", "Event payload mismatch");
+                assert_eq!(event.path, "/events/test", "Event path mismatch");
+                got_event = true;
+                rn_free(ev_ptr, ev_len);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(got_event, "did not get event on target peer");
 
         // Cleanup
         let _ = rn_transport_stop(tb, &mut err as *mut _ as *mut _);

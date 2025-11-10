@@ -6,6 +6,7 @@
 use anyhow::{anyhow, Result};
 use runar_node::{ActionMetadata, Node};
 use runar_test_utils::create_node_test_config;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
+use runar_logging::{Component, Logger};
 use runar_node::services::abstract_service::ServiceState;
 use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
 use runar_node::services::{ActionHandler, EventContext, EventRegistrationOptions, RequestContext};
@@ -365,9 +366,15 @@ async fn test_action_handler_network_isolation() {
                 .unwrap(),
         );
 
+        let metadata: HashMap<String, ArcValue> = HashMap::new();
         // Execute each handler with the correct network ID in the context
-        let request_ctx1 = RequestContext::new(&network1_path, node.clone(), logger.clone());
-        let request_ctx2 = RequestContext::new(&network2_path, node, logger.clone());
+        let request_ctx1 = RequestContext::new(
+            &network1_path,
+            node.clone(),
+            metadata.clone(),
+            logger.clone(),
+        );
+        let request_ctx2 = RequestContext::new(&network2_path, node, metadata, logger.clone());
 
         // Test handler 1 with network1 context
         let result1 = registry
@@ -414,8 +421,10 @@ async fn test_action_handler_network_isolation() {
                 .await
                 .unwrap(),
         );
+        let metadata: HashMap<String, ArcValue> = HashMap::new();
         // Create a context with the wrong network ID
-        let wrong_network_context = RequestContext::new(&wrong_network_path, node, logger.clone());
+        let wrong_network_context =
+            RequestContext::new(&wrong_network_path, node, metadata, logger.clone());
 
         // Even though the PathTrie bug is fixed, it's still good practice to validate network IDs
         // in handlers for defense in depth
@@ -758,9 +767,15 @@ async fn test_multiple_network_ids() {
             .unwrap(),
     );
 
+    let metadata: HashMap<String, ArcValue> = HashMap::new();
     // Request contexts for each network
-    let request_ctx1 = RequestContext::new(&network1_path, node.clone(), logger.clone());
-    let request_ctx2 = RequestContext::new(&network2_path, node, logger.clone());
+    let request_ctx1 = RequestContext::new(
+        &network1_path,
+        node.clone(),
+        metadata.clone(),
+        logger.clone(),
+    );
+    let request_ctx2 = RequestContext::new(&network2_path, node, metadata, logger.clone());
 
     // Create network-specific handlers
     let network1_handler: ActionHandler = Arc::new(move |_params, context| {

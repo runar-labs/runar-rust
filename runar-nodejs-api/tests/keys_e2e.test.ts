@@ -14,7 +14,9 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
   afterEach(() => {
     // ✅ PROPER: Automatic cleanup
-    testEnv.cleanup();
+    if (testEnv) {
+      testEnv.cleanup();
+    }
   });
 
   test('should handle mobile-to-node certificate workflow', async () => {
@@ -98,17 +100,18 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(workKey.length).toBe(65); // ECDSA P-256 uncompressed
 
     // ✅ REAL: Validate we have the private key for this network public key
-    const retrievedNetworkPublicKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
-    expect(retrievedNetworkPublicKey instanceof Uint8Array).toBe(true);
-    expect(retrievedNetworkPublicKey.length).toBeGreaterThan(0);
+    const hasNetworkPrivateKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
+    expect(typeof hasNetworkPrivateKey).toBe('boolean');
+    expect(hasNetworkPrivateKey).toBe(true);
+    expect(networkPublicKey.length).toBeGreaterThan(0);
     
     // ✅ REAL: Encrypt with actual envelope
     const testData = Buffer.from('test envelope data');
     const profilePks = [personalKey, workKey];
     
     const encrypted = mobileKeys.mobileEncryptWithEnvelope(
-      testData, 
-      retrievedNetworkPublicKey, 
+      testData,
+      networkPublicKey,
       profilePks
     );
     expect(encrypted instanceof Uint8Array).toBe(true);
@@ -152,9 +155,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     }
 
     // ✅ REAL: Validate we have the private key for this network public key
-    const retrievedNetworkPublicKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
-    expect(retrievedNetworkPublicKey instanceof Uint8Array).toBe(true);
-    expect(retrievedNetworkPublicKey.length).toBeGreaterThan(0);
+    const hasNetworkPrivateKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
+    expect(typeof hasNetworkPrivateKey).toBe('boolean');
+    expect(hasNetworkPrivateKey).toBe(true);
+    expect(networkPublicKey.length).toBeGreaterThan(0);
     
     // ✅ REAL: Test 1 - Encrypt with profile keys and decrypt with mobile (profile key path)
     console.log('   🔐 Testing profile key encryption/decryption path...');
@@ -163,8 +167,8 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const profilePks1 = [profileKeys.get('personal')!, profileKeys.get('work')!];
     
     const encrypted1 = mobileKeys.mobileEncryptWithEnvelope(
-      testData1, 
-      retrievedNetworkPublicKey, 
+      testData1,
+      networkPublicKey,
       profilePks1
     );
     expect(encrypted1 instanceof Uint8Array).toBe(true);
@@ -179,10 +183,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Test 2 - Encrypt with network key and decrypt with mobile (network key fallback)
     console.log('   🌐 Testing network key encryption/decryption path...');
     
-    const testData2 = Buffer.from('test data for network key decryption');
+    const testData2 = new Uint8Array(Buffer.from('test data for network key decryption'));
     const encrypted2 = mobileKeys.mobileEncryptWithEnvelope(
       testData2, 
-      retrievedNetworkPublicKey, 
+      networkPublicKey, 
       [] // Empty profile keys - should use network key
     );
     expect(encrypted2 instanceof Uint8Array).toBe(true);
@@ -197,7 +201,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Test 3 - Multiple valid profile keys
     console.log('   🔀 Testing multiple valid profile keys scenario...');
     
-    const testData3 = Buffer.from('test data for multiple valid profile keys');
+    const testData3 = new Uint8Array(Buffer.from('test data for multiple valid profile keys'));
     const multipleProfilePks = [
       profileKeys.get('personal')!, // Valid profile key
       profileKeys.get('work')!,     // Valid profile key
@@ -206,7 +210,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     const encrypted3 = mobileKeys.mobileEncryptWithEnvelope(
       testData3, 
-      retrievedNetworkPublicKey, 
+      networkPublicKey, 
       multipleProfilePks
     );
     expect(encrypted3 instanceof Uint8Array).toBe(true);
@@ -221,12 +225,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Test 4 - Multiple profile keys with different combinations
     console.log('   🔄 Testing multiple profile key combinations...');
     
-    const testData4 = Buffer.from('test data for multiple profile combinations');
+    const testData4 = new Uint8Array(Buffer.from('test data for multiple profile combinations'));
     const allProfilePks = Array.from(profileKeys.values());
-    
+
     const encrypted4 = mobileKeys.mobileEncryptWithEnvelope(
-      testData4, 
-      retrievedNetworkPublicKey, 
+      testData4,
+      networkPublicKey,
       allProfilePks
     );
     expect(encrypted4 instanceof Uint8Array).toBe(true);
@@ -243,12 +247,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     // This test simulates a user mobile keystore that only has network public keys
     // The mobileDecryptEnvelope should work by trying profile keys first, then network keys
-    const userTestData = Buffer.from('user mobile keystore test data');
+    const userTestData = new Uint8Array(Buffer.from('user mobile keystore test data'));
     const userProfilePks = [profileKeys.get('personal')!];
-    
+
     const userEncrypted = mobileKeys.mobileEncryptWithEnvelope(
-      userTestData, 
-      retrievedNetworkPublicKey, 
+      userTestData,
+      networkPublicKey,
       userProfilePks
     );
     expect(userEncrypted instanceof Uint8Array).toBe(true);
@@ -265,12 +269,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Test 6 - Performance test with multiple decryptions
     console.log('   ⚡ Testing performance with multiple decryptions...');
     
-    const performanceData = Buffer.from('performance test data');
+    const performanceData = new Uint8Array(Buffer.from('performance test data'));
     const performanceProfilePks = [profileKeys.get('work')!, profileKeys.get('finance')!];
-    
+
     const performanceEncrypted = mobileKeys.mobileEncryptWithEnvelope(
-      performanceData, 
-      retrievedNetworkPublicKey, 
+      performanceData,
+      networkPublicKey,
       performanceProfilePks
     );
     
@@ -350,9 +354,9 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const nodeKeys = testEnv.getNodeKeys();
     
     // ✅ REAL: Test that certificate was installed successfully
-    const nodeState = nodeKeys.nodeGetKeystoreState();
-    expect(typeof nodeState).toBe('number');
-    expect(nodeState).toBeGreaterThanOrEqual(0);
+    const hasKeys = nodeKeys.hasKeys();
+    expect(typeof hasKeys).toBe('boolean');
+    expect(hasKeys).toBe(true);
     
     // ✅ REAL: Test that we can perform operations that require valid certificates
     // This indirectly validates that certificates are working
@@ -387,10 +391,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     nodeKeys.nodeInstallNetworkKey(networkKeyMessage);
     
     // ✅ REAL: Test envelope encryption/decryption before serialization
-    const testData = Buffer.from('test data before serialization');
+    const testData = new Uint8Array(Buffer.from('test data before serialization'));
     const encryptedBefore = mobileKeys.mobileEncryptWithEnvelope(
       testData,
-      mobileKeys.mobileHasNetworkPrivateKey(initialNetworkPublicKey),
+      initialNetworkPublicKey,
       [mobileKeys.mobileDeriveUserProfileKey('test-profile')]
     );
     
@@ -402,10 +406,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     mobileKeys.flushState();
     
     // ✅ REAL: Verify state was persisted
-    const persistedNodeState = nodeKeys.nodeGetKeystoreState();
-    const persistedMobileState = mobileKeys.mobileGetKeystoreState();
-    expect(typeof persistedNodeState).toBe('number');
-    expect(typeof persistedMobileState).toBe('number');
+    const persistedNodeState = nodeKeys.hasKeys();
+    const persistedMobileState = mobileKeys.hasKeys();
+    expect(typeof persistedNodeState).toBe('boolean');
+    expect(typeof persistedMobileState).toBe('boolean');
     
     // ✅ REAL: Test operations after serialization (state restoration)
     const restoredNodeId = nodeKeys.nodeGetNodeId();
@@ -419,10 +423,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(uint8ArrayEquals(decryptedAfter, testData)).toBe(true);
     
     // ✅ REAL: Test new operations after restoration
-    const newTestData = Buffer.from('test data after restoration');
+    const newTestData = new Uint8Array(Buffer.from('test data after restoration'));
     const newEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       newTestData,
-      mobileKeys.mobileHasNetworkPrivateKey(initialNetworkPublicKey),
+      initialNetworkPublicKey,
       [mobileKeys.mobileDeriveUserProfileKey('test-profile')]
     );
     
@@ -507,13 +511,13 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const performanceResults = new Map<string, number>();
     
     for (const size of largeDataSizes) {
-      const testData = Buffer.alloc(size, Math.floor(Math.random() * 256));
+      const testData = new Uint8Array(Buffer.alloc(size, Math.floor(Math.random() * 256)));
       const startTime = Date.now();
       
       // ✅ REAL: Encrypt large data with envelope
       const encrypted = mobileKeys.mobileEncryptWithEnvelope(
         testData,
-        mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+        testEnv.getNetworkPublicKey(),
         [mobileKeys.mobileDeriveUserProfileKey('performance-test')]
       );
       
@@ -567,13 +571,13 @@ describe('Keys End-to-End Specific Scenarios', () => {
     console.log('   💾 Testing memory usage through repeated operations...');
     
     const iterations = 100;
-    const testData = Buffer.from('memory test data');
+    const testData = new Uint8Array(Buffer.from('memory test data'));
     const encryptedData = [];
     
     for (let i = 0; i < iterations; i++) {
       const encrypted = mobileKeys.mobileEncryptWithEnvelope(
         testData,
-        mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+        testEnv.getNetworkPublicKey(),
         [mobileKeys.mobileDeriveUserProfileKey(`memory-test-${i}`)]
       );
       encryptedData.push(encrypted);
@@ -592,10 +596,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const persistTime = Date.now() - persistStartTime;
     
     // Verify state was persisted correctly
-    const nodeState = nodeKeys.nodeGetKeystoreState();
-    const mobileState = mobileKeys.mobileGetKeystoreState();
-    expect(typeof nodeState).toBe('number');
-    expect(typeof mobileState).toBe('number');
+    const nodeState = nodeKeys.hasKeys();
+    const mobileState = mobileKeys.hasKeys();
+    expect(typeof nodeState).toBe('boolean');
+    expect(typeof mobileState).toBe('boolean');
     
     // Performance summary
     console.log('   📊 Performance Summary:');
@@ -605,10 +609,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     console.log(`      Large data encryption/decryption: ${Array.from(performanceResults.values()).reduce((a, b) => a + b, 0)}ms total`);
     
     // Verify all operations still work after performance testing
-    const finalTestData = Buffer.from('final performance validation');
+    const finalTestData = new Uint8Array(Buffer.from('final performance validation'));
     const finalEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       finalTestData,
-      mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+      testEnv.getNetworkPublicKey(),
       [mobileKeys.mobileDeriveUserProfileKey('final-test')]
     );
     
@@ -628,10 +632,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     console.log('   📏 Testing boundary data sizes...');
     
     // Test with 1 byte (minimum)
-    const oneByteData = Buffer.from('a');
+    const oneByteData = new Uint8Array(Buffer.from('a'));
     const oneByteEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       oneByteData,
-      mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+      testEnv.getNetworkPublicKey(),
       [mobileKeys.mobileDeriveUserProfileKey('boundary-test')]
     );
     expect(oneByteEncrypted instanceof Uint8Array).toBe(true);
@@ -641,10 +645,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(uint8ArrayEquals(oneByteDecrypted, oneByteData)).toBe(true);
     
     // Test with very large data (1MB)
-    const largeData = Buffer.alloc(1048576, 0x42);
+    const largeData = new Uint8Array(Buffer.alloc(1048576, 0x42));
     const largeEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       largeData,
-      mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+      testEnv.getNetworkPublicKey(),
       [mobileKeys.mobileDeriveUserProfileKey('large-test')]
     );
     expect(largeEncrypted instanceof Uint8Array).toBe(true);
@@ -658,10 +662,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Test 2 - Empty profile keys array
     console.log('   🔑 Testing empty profile keys array...');
     
-    const emptyProfileData = Buffer.from('empty profile test');
+    const emptyProfileData = new Uint8Array(Buffer.from('empty profile test'));
     const emptyProfileEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       emptyProfileData,
-      mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+      testEnv.getNetworkPublicKey(),
       [] // Empty profile keys array
     );
     expect(emptyProfileEncrypted instanceof Uint8Array).toBe(true);
@@ -692,10 +696,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
       expect(key.length).toBe(65); // ECDSA P-256 uncompressed
       
       // Test encryption with this profile key
-      const testData = Buffer.from(`test data for ${profile}`);
+      const testData = new Uint8Array(Buffer.from(`test data for ${profile}`));
       const encrypted = mobileKeys.mobileEncryptWithEnvelope(
         testData,
-        mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+        testEnv.getNetworkPublicKey(),
         [key]
       );
       
@@ -708,7 +712,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Test 4 - Rapid successive operations
     console.log('   ⚡ Testing rapid successive operations...');
     
-    const rapidTestData = Buffer.from('rapid test data');
+    const rapidTestData = new Uint8Array(Buffer.from('rapid test data'));
     const rapidResults = [];
     
     for (let i = 0; i < 50; i++) {
@@ -716,7 +720,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
       
       const encrypted = mobileKeys.mobileEncryptWithEnvelope(
         rapidTestData,
-        mobileKeys.mobileHasNetworkPrivateKey(testEnv.getNetworkPublicKey()),
+        testEnv.getNetworkPublicKey(),
         [mobileKeys.mobileDeriveUserProfileKey(`rapid-${i}`)]
       );
       
@@ -768,10 +772,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(newNetworkPublicKey).not.toEqual(originalNetworkPublicKey);
     
     // Test encryption with new network
-    const newNetworkData = Buffer.from('new network test data');
+    const newNetworkData = new Uint8Array(Buffer.from('new network test data'));
     const newNetworkEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       newNetworkData,
-      mobileKeys.mobileHasNetworkPrivateKey(newNetworkPublicKey),
+      newNetworkPublicKey,
       [mobileKeys.mobileDeriveUserProfileKey('new-network')]
     );
     
@@ -830,9 +834,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(networkPublicKey).toBeInstanceOf(Uint8Array);
     expect(networkPublicKey.length).toBeGreaterThan(0);
     
-    const retrievedNetworkPublicKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
-    expect(retrievedNetworkPublicKey instanceof Uint8Array).toBe(true);
-    expect(retrievedNetworkPublicKey.length).toBe(65); // ECDSA P-256 uncompressed
+    const hasNetworkPrivateKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
+    expect(typeof hasNetworkPrivateKey).toBe('boolean');
+    expect(hasNetworkPrivateKey).toBe(true);
+    expect(networkPublicKey.length).toBe(65); // ECDSA P-256 uncompressed
     
     const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(
       networkPublicKey,
@@ -927,13 +932,13 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(() => mobileKeys.flushState()).not.toThrow();
     
     // Verify state was persisted
-    const nodeState = nodeKeys.nodeGetKeystoreState();
-    const mobileState = mobileKeys.mobileGetKeystoreState();
-    expect(typeof nodeState).toBe('number');
-    expect(typeof mobileState).toBe('number');
+    const nodeState = nodeKeys.hasKeys();
+    const mobileState = mobileKeys.hasKeys();
+    expect(typeof nodeState).toBe('boolean');
+    expect(typeof mobileState).toBe('boolean');
     
     // Verify operations still work after persistence
-    const finalTestData = Buffer.from('final integration test data');
+    const finalTestData = new Uint8Array(Buffer.from('final integration test data'));
     const finalEncrypted = mobileKeys.mobileEncryptWithEnvelope(
       finalTestData,
       networkPublicKey,
@@ -949,7 +954,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     console.log('   🔗 Testing complete cross-component integration...');
     
     // Verify all components work together
-    const integrationData = Buffer.from('cross-component integration test');
+    const integrationData = new Uint8Array(Buffer.from('cross-component integration test'));
     
     // Mobile encrypts with envelope
     const integrationEncrypted = mobileKeys.mobileEncryptWithEnvelope(

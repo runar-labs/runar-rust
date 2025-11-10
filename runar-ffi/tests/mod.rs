@@ -7,3 +7,7 @@ pub mod common;
 
 // Re-export common functions for easy access in test files
 pub use common::*;
+
+// Include handshake tests
+#[cfg(test)]
+mod ffi_handshake_test;

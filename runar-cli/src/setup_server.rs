@@ -5,9 +5,9 @@
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use runar_common::logging::Logger;
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage};
-use runar_macros_common::{log_debug, log_error, log_info};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info};
 use serde::de::DeserializeOwned;
 use serde_cbor::from_slice;
 use std::sync::Arc;
@@ -210,9 +210,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_server() {
+        use runar_logging::Component;
         // This is a basic test to ensure the server can start
         // In a real test, you would need to mock the mobile device
-        let logger = Arc::new(Logger::new_root(runar_common::logging::Component::CLI));
+        let logger = Arc::new(Logger::new_root(Component::CLI));
         let server = SetupServer::new("127.0.0.1".to_string(), 0, logger);
 
         // The server should be created successfully

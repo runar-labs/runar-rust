@@ -3,14 +3,15 @@
 // These tests verify that the Node properly handles requests
 // and delegates to the ServiceRegistry as needed.
 
-use runar_common::logging::{Component, Logger};
-use runar_common::logging::{LogLevel, LoggingConfig};
+use runar_logging::{Component, Logger};
+use runar_logging::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_node::ServiceMetadata;
 use runar_node::{LifecycleContext, NodeDelegate, RequestContext, TopicPath};
 
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -200,9 +201,20 @@ async fn test_node_event_metadata_registration() -> Result<()> {
     node.add_service(service).await?;
     node.start().await?; // This will call init() on MathService
 
-    // Request the list of services from the registry
+    // Request the list of services from the registry (include all services for testing)
+    let mut params_map = std::collections::HashMap::new();
+    params_map.insert(
+        "include_internal_services".to_string(),
+        ArcValue::new_primitive(true),
+    );
+    params_map.insert(
+        "include_remote_services".to_string(),
+        ArcValue::new_primitive(true),
+    );
+    let params = ArcValue::new_map(params_map);
+
     let list_arc = node
-        .request("$registry/services/list", None::<ArcValue>, None)
+        .request("$registry/services/list", Some(params), None)
         .await?
         .as_typed_list_ref::<ServiceMetadata>()?;
 
@@ -413,9 +425,11 @@ async fn test_on_method() {
         // Test 3: Test from RequestContext
         let test_logger = Logger::new_root(Component::Custom("Test"));
         let topic_path = TopicPath::new("math/add", "test_network").unwrap();
+        let metadata: HashMap<String, ArcValue> = HashMap::new();
         let context = RequestContext::new(
             &topic_path,
             Arc::new(node.clone()),
+            metadata,
             Arc::new(test_logger.clone()),
         );
 
@@ -486,7 +500,7 @@ async fn test_on_method() {
 ///
 /// INTENTION: This test validates that:
 /// - Service initialization triggers state/initialized events
-/// - Service start triggers state/running events  
+/// - Service start triggers state/running events
 /// - Service stop triggers state/stopped events
 /// - Service errors trigger state/error events
 /// - All state events can be received using the on method

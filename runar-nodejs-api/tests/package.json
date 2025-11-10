@@ -1,0 +1,21 @@
+{
+  "name": "runar-nodejs-api-tests",
+  "version": "1.0.0",
+  "description": "E2E tests for Runar NodeJS Native API",
+  "main": "nodejs_e2e_integration_test.ts",
+  "scripts": {
+    "test": "ts-node nodejs_e2e_integration_test.ts",
+    "test:watch": "ts-node --watch nodejs_e2e_integration_test.ts",
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "dependencies": {
+    "cbor": "^9.0.0",
+    "@types/cbor": "^2.0.0"
+  }
+}

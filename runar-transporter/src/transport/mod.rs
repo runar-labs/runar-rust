@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use rand;
 use runar_schemas::NodeInfo;
 
+use runar_macros_common::VecVecBytes;
 use serde::{Deserialize, Serialize};
+use serde_bytes;
+
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::ops::Range;
@@ -112,20 +115,23 @@ pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
     None // No free port found after max attempts
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
     pub path: String,
 
     /// The serialized value/payload data as bytes
+    #[serde(with = "serde_bytes")]
     pub payload_bytes: Vec<u8>,
 
     /// Correlation ID
     pub correlation_id: String,
 
     /// Network public key for encryption context
+    #[serde(with = "serde_bytes")]
     pub network_public_key: Option<Vec<u8>>,
 
+    #[serde(with = "VecVecBytes")]
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 
@@ -138,7 +144,7 @@ pub const MESSAGE_TYPE_EVENT: u32 = 6;
 pub const MESSAGE_TYPE_ERROR: u32 = 7;
 
 /// Represents a message exchanged between nodes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkMessage {
     /// Source node identifier
     pub source_node_id: String,
@@ -230,7 +236,7 @@ pub trait NetworkTransport: Send + Sync {
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>, NetworkError>;
 
-    /// Fire-and-forget / broadcast message (pattern B)  
+    /// Fire-and-forget / broadcast message (pattern B)
     /// events or heart-beats.
     async fn publish(
         &self,
@@ -249,12 +255,6 @@ pub trait NetworkTransport: Send + Sync {
 
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
-
-    // / Expose the transport-owned keystore (read-only).
-    // fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
-
-    // / Expose the transport-owned label resolver.
-    // fn label_resolver(&self) -> Arc<runar_serializer::traits::LabelResolver>;
 }
 
 /// Error type for network operations

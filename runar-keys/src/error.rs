@@ -78,6 +78,12 @@ pub enum KeyError {
 
     #[error("Key already initialized: {0}")]
     KeyAlreadyInitialized(String),
+
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitError(String),
+
+    #[error("Authorization error: {0}")]
+    AuthorizationError(String),
 }
 
 // Convert from rcgen errors

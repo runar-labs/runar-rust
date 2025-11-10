@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
+use runar_logging::{Component, Logger};
 use runar_serializer::{
     traits::{EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver, SerializationContext},
     ArcValue, Plain, ValueCategory,
@@ -49,9 +49,8 @@ fn build_test_context() -> Result<TestContext> {
     // and the user has its own mobile key store with its keys, but does not have access to the network private keys
 
     let mut mobile_network_master = MobileKeyManager::new(logger.clone())?;
-    let network_public_key = mobile_network_master.generate_network_data_key()?;
-    let network_id = runar_common::compact_ids::compact_id(&network_public_key);
-    let network_pub = mobile_network_master.has_network_private_key(&network_public_key)?;
+    let network_pub = mobile_network_master.generate_network_data_key()?;
+    let network_id = runar_common::compact_ids::compact_id(&network_pub);
 
     let mut user_mobile = MobileKeyManager::new(logger.clone())?;
     user_mobile.initialize_user_root_key()?;
@@ -61,9 +60,10 @@ fn build_test_context() -> Result<TestContext> {
     user_mobile.install_network_public_key(&network_pub)?;
 
     let mut node_keys = NodeKeyManager::new(logger.clone())?;
+    node_keys.generate_keys()?;
     let token = node_keys.generate_csr()?;
     let nk_msg = mobile_network_master
-        .create_network_key_message(&network_public_key, &token.node_agreement_public_key)?;
+        .create_network_key_message(&network_pub, &token.node_agreement_public_key)?;
     node_keys.install_network_key(nk_msg)?;
 
     let user_mobile_ks = Arc::new(user_mobile) as Arc<dyn EnvelopeCrypto>;

@@ -39,3 +39,6 @@ targets = [
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
 ]
+
+[dev-dependencies]
+runar_logging = { path = "../runar-logging" }

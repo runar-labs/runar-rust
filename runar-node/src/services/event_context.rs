@@ -14,9 +14,9 @@ use crate::node::Node; // Added for concrete type
 use crate::services::{OnOptions, PublishOptions, RequestOptions}; // Restored
                                                                   // Removed unused import: use crate::NodeDelegate;
 use anyhow::Result;
-use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
 use runar_common::routing::TopicPath;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{Component, Logger}; // Restored
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
 use std::fmt;
@@ -90,16 +90,12 @@ impl EventContext {
     ) -> Self {
         // Add event path to logger if available from topic_path
         let event_path = topic_path.action_path();
-        let event_logger = if !event_path.is_empty() {
-            // If there's an event path, add it to the logger
-            Arc::new(logger.with_event_path(event_path))
-        } else {
-            logger
-        };
+        let event_logger = logger.with_component(Component::Event);
+        event_logger.set_context(event_path);
 
         Self {
             topic_path: topic_path.clone(),
-            logger: event_logger,
+            logger: Arc::new(event_logger),
             node_delegate,
             delivery_options: None,
             is_local,
@@ -294,26 +290,5 @@ impl EventContext {
         let handle = self.node_delegate.on(topic, options);
         let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
         inner
-    }
-}
-
-impl LoggingContext for EventContext {
-    fn component(&self) -> Component {
-        Component::Service
-    }
-
-    fn service_path(&self) -> Option<&str> {
-        // Convert the owned String to a string slice that lives as long as self
-        let path = self.topic_path.service_path();
-        Some(Box::leak(path.into_boxed_str()))
-    }
-
-    fn event_path(&self) -> Option<&str> {
-        // Get from logger's event_path
-        self.logger.event_path()
-    }
-
-    fn logger(&self) -> &Logger {
-        &self.logger
     }
 }

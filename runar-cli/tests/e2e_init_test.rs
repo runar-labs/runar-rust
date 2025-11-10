@@ -13,14 +13,12 @@
 use anyhow::{Context, Result};
 
 use runar_cli::{InitCommand, NodeConfig};
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, Logger},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::{
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     NodeKeyManager,
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -265,8 +263,31 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     let _init_cmd = InitCommand::new(config_dir.clone(), logger.clone());
 
     let (mut node_key_manager, setup_token) = {
+        // Create NodeKeyManager with full persistence setup (like the new CLI)
+        let key_logger = Arc::new(Logger::new_root(Component::Keys));
         let mut node_key_manager =
-            NodeKeyManager::new(logger.clone()).context("Failed to create node key manager")?;
+            NodeKeyManager::new(key_logger).context("Failed to create node key manager")?;
+
+        // Configure persistence directory
+        node_key_manager.set_persistence_dir(config_dir.clone());
+
+        // Register device keystore (OS integration)
+        let device_keystore = runar_cli::device_keystore::create_device_keystore_for_platform()
+            .context("Failed to create device keystore for platform")?;
+        node_key_manager.register_device_keystore(device_keystore);
+
+        // Check if already initialized
+        let state_loaded = node_key_manager
+            .probe_and_load_state()
+            .context("Failed to probe and load state")?;
+        if state_loaded {
+            return Err(anyhow::anyhow!("Node already initialized"));
+        }
+
+        // Generate keys for new node
+        node_key_manager
+            .generate_keys()
+            .context("Failed to generate node keys")?;
 
         let setup_token = node_key_manager
             .generate_csr()
@@ -275,7 +296,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
         (node_key_manager, setup_token)
     };
 
-    let node_public_key = node_key_manager.get_node_public_key();
+    let node_public_key = node_key_manager.get_node_public_key().unwrap();
     let node_id = compact_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");
@@ -407,6 +428,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
             network_id.clone(),            // Use actual network ID from mobile
             hex::encode(&node_public_key), // Use full hex-encoded public key bytes
             setup_config.get_setup_server().clone(),
+            config_dir.clone(), // Persistence directory
         )
     };
 
@@ -473,7 +495,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     println!();
     println!("📊 CLI Test Statistics:");
     println!("   • Node ID: {node_id}");
-    println!("   • Keys Name: {}", setup_config.get_keys_name());
+    println!("   • Persistence Dir: {config_dir:?}");
     println!("   • Configuration: {config_dir:?}");
 
     Ok(())

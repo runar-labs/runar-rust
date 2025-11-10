@@ -10,9 +10,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use core::fmt;
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use serde::{Deserialize, Serialize};
+use serde_bytes;
 use serde_cbor::{from_slice, to_vec};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -37,6 +38,7 @@ const DEFAULT_MULTICAST_PORT: u16 = 45678;
 /// Unique identifier for a node in the network
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerInfo {
+    #[serde(with = "serde_bytes")]
     pub public_key: Vec<u8>,
     pub addresses: Vec<String>,
 }
@@ -94,7 +96,7 @@ pub struct MulticastDiscovery {
     // Multicast address field
     multicast_addr: Arc<Mutex<SocketAddr>>,
     // Logger
-    logger: Logger,
+    logger: Arc<Logger>,
 }
 
 impl MulticastDiscovery {
@@ -102,10 +104,8 @@ impl MulticastDiscovery {
     pub async fn new(
         local_peer_info: PeerInfo,
         options: DiscoveryOptions,
-        logger: Logger,
+        logger: Arc<Logger>,
     ) -> Result<Self> {
-        let logger = logger.with_component(Component::NetworkDiscovery);
-
         // Parse multicast group - handle both formats: "239.255.42.98" and "239.255.42.98:45678"
         let (multicast_addr, port) = if options.multicast_group.contains(':') {
             // Parse as a SocketAddr "IP:PORT"
@@ -392,7 +392,41 @@ impl MulticastDiscovery {
                 announce: Some(peer_info),
                 goodbye: None,
             } => {
-                log_debug!(logger, "Processing announce message from peer");
+                log_debug!(logger, "Processing announce message from peer #1");
+                log_debug!(logger, "About to access peer_info struct");
+
+                // Add safety checks to debug the crash
+                log_debug!(logger, "PeerInfo struct address: {:p}", peer_info);
+                log_debug!(logger, "About to access public_key");
+                log_debug!(
+                    logger,
+                    "PeerInfo public_key address: {:p}",
+                    peer_info.public_key.as_ptr()
+                );
+                log_debug!(logger, "About to access capacity");
+                log_debug!(
+                    logger,
+                    "PeerInfo public_key capacity: {}",
+                    peer_info.public_key.capacity()
+                );
+
+                // Check if the vector is valid before accessing
+                if peer_info.public_key.is_empty() {
+                    log_warn!(logger, "PeerInfo public_key is empty");
+                } else {
+                    log_debug!(
+                        logger,
+                        "PeerInfo public_key length: {}",
+                        peer_info.public_key.len()
+                    );
+                    log_debug!(
+                        logger,
+                        "PeerInfo public_key hex: {:02x?}",
+                        peer_info.public_key
+                    );
+                }
+
+                log_debug!(logger, "PeerInfo addresses: {:?}", peer_info.addresses);
 
                 // Emit Discovered event to all listeners
                 let listeners_read = listeners.read().await;

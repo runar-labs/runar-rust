@@ -21,7 +21,7 @@
 
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -32,8 +32,8 @@ use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{
     ActionHandler, EventContext, EventRegistrationOptions, RegistryDelegate, RemoteService,
 };
-use runar_common::logging::Logger;
 use runar_common::routing::{PathTrie, TopicPath};
+use runar_logging::Logger;
 use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_serializer::ArcValue;
 
@@ -179,8 +179,6 @@ pub struct ServiceRegistry {
     /// Local services registry (using PathTrie instead of HashMap)
     local_services: Arc<RwLock<PathTrie<Arc<ServiceEntry>>>>,
 
-    local_services_list: Arc<DashMap<TopicPath, Arc<ServiceEntry>>>,
-
     /// Remote services registry (using PathTrie instead of HashMap)
     remote_services: Arc<RwLock<PathTrie<Arc<RemoteService>>>>,
 
@@ -209,7 +207,6 @@ impl Clone for ServiceRegistry {
                 .subscription_id_to_service_topic_path
                 .clone(),
             local_services: self.local_services.clone(),
-            local_services_list: self.local_services_list.clone(),
             remote_services: self.remote_services.clone(),
             local_service_states: self.local_service_states.clone(),
             remote_service_states: self.remote_service_states.clone(),
@@ -238,7 +235,6 @@ impl ServiceRegistry {
             subscription_id_to_topic_path: Arc::new(DashMap::new()),
             subscription_id_to_service_topic_path: Arc::new(DashMap::new()),
             local_services: Arc::new(RwLock::new(PathTrie::new())),
-            local_services_list: Arc::new(DashMap::new()),
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
             local_service_states: Arc::new(DashMap::new()),
             remote_service_states: Arc::new(DashMap::new()),
@@ -260,9 +256,6 @@ impl ServiceRegistry {
             .write()
             .await
             .set_value(service_topic.clone(), service);
-        //TODO understand why we have this duplciation of local_services and local_services_list
-        self.local_services_list
-            .insert(service_topic, service_entry.clone());
 
         Ok(())
     }
@@ -756,17 +749,16 @@ impl ServiceRegistry {
     /// starting, and stopping. This preserves the Node's responsibility for service
     /// lifecycle management while keeping the Registry focused on registration.
     pub async fn get_local_services(&self) -> HashMap<TopicPath, Arc<ServiceEntry>> {
-        // Convert DashMap to HashMap using DashMap iter pattern
-        let mut result = HashMap::with_capacity(self.local_services_list.len());
-        for entry in self.local_services_list.iter() {
-            result.insert(entry.key().clone(), entry.value().clone());
+        // Get all services from the PathTrie
+        let services_guard = self.local_services.read().await;
+        let all_services = services_guard.get_all_values();
+
+        // Convert to HashMap using the service topic path as the key
+        let mut result = HashMap::with_capacity(all_services.len());
+        for service_entry in all_services {
+            result.insert(service_entry.service_topic.clone(), service_entry);
         }
         result
-    }
-
-    /// Get a reference to local services without cloning
-    pub async fn get_local_services_ref(&self) -> &DashMap<TopicPath, Arc<ServiceEntry>> {
-        &self.local_services_list
     }
 
     pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<TopicPath> {
@@ -987,7 +979,7 @@ impl ServiceRegistry {
     }
 
     async fn get_service_metadata(&self, topic_path: &TopicPath) -> Option<ServiceMetadata> {
-        // Find service in the local services trie
+        // First, try to find service in the local services trie
         let services = self.local_services.read().await;
         let matches = services.find_matches(topic_path);
 
@@ -1012,6 +1004,30 @@ impl ServiceRegistry {
                 actions,
                 registration_time: service_entry.registration_time,
                 last_start_time: service_entry.last_start_time,
+            });
+        }
+
+        // If not found in local services, try remote services
+        let remote_services = self.remote_services.read().await;
+        let remote_matches = remote_services.find_matches(topic_path);
+
+        if !remote_matches.is_empty() {
+            let remote_service = &remote_matches[0].content;
+            let network_id_string = topic_path.network_id();
+
+            // Get actions directly from the RemoteService instance
+            let actions = remote_service.get_actions_metadata();
+
+            // Create metadata using individual getter methods
+            return Some(ServiceMetadata {
+                network_id: network_id_string,
+                service_path: remote_service.path().to_string(),
+                name: remote_service.name().to_string(),
+                version: remote_service.version().to_string(),
+                description: remote_service.description().to_string(),
+                actions,
+                registration_time: 0, // Remote services don't have registration time
+                last_start_time: None, // Remote services don't have start time
             });
         }
 
@@ -1047,50 +1063,19 @@ impl ServiceRegistry {
         Ok(result)
     }
 
-    /// Optimized version that pre-allocates the result vector
-    pub async fn get_all_subscriptions_optimized(
-        &self,
-        include_internal_services: bool,
-    ) -> Result<Vec<SubscriptionMetadata>> {
-        let subscriptions = self.event_subscriptions.read().await;
-        let all_values = subscriptions.get_all_values();
-
-        // Pre-allocate with estimated capacity to reduce reallocations
-        let estimated_capacity = all_values.iter().map(|vec| vec.len()).sum();
-        let mut result = Vec::with_capacity(estimated_capacity);
-
-        for subscription_vec in all_values {
-            for (_, _, metadata) in subscription_vec {
-                // Filter out internal services if not included
-                if !include_internal_services {
-                    // metadata.path is a full topic path including network id prefix
-                    let tp = TopicPath::from_full_path(&metadata.path).map_err(|e| {
-                        anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
-                    })?;
-                    let service_path = tp.service_path();
-                    if is_internal_service(service_path.as_str()) {
-                        continue;
-                    }
-                }
-                result.push(metadata);
-            }
-        }
-
-        Ok(result)
-    }
-
     /// Get metadata for all services with an option to filter internal services
     ///
-    /// INTENTION: Retrieve metadata for all registered services with the option
+    /// INTENTION: Retrieve metadata for all registered services (both local and remote) with the option
     /// to exclude internal services (those with paths starting with $)
     pub async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
-        let mut result = HashMap::with_capacity(self.local_services_list.len());
-        let local_services = self.get_local_services().await;
+        let mut result = HashMap::new();
 
-        // Iterate through all services
+        // Get local services
+        let local_services = self.get_local_services().await;
         for (_, service_entry) in local_services {
             let service = &service_entry.service;
             let path_str = service.path();
@@ -1115,40 +1100,34 @@ impl ServiceRegistry {
             result.insert(path_str.to_string(), service_metadata);
         }
 
-        Ok(result)
-    }
+        // Get remote services if requested
+        if include_remote_services {
+            let remote_services_guard = self.remote_services.read().await;
+            let all_remote_services = remote_services_guard.get_all_values();
+            for remote_service in all_remote_services {
+                let path_str = remote_service.path();
 
-    /// Optimized version that uses references to avoid cloning
-    pub async fn get_all_service_metadata_ref(
-        &self,
-        include_internal_services: bool,
-    ) -> Result<HashMap<String, ServiceMetadata>> {
-        let mut result = HashMap::new();
+                // Skip internal services if not included
+                if !include_internal_services && is_internal_service(path_str) {
+                    continue;
+                }
 
-        // Iterate through all services using DashMap iter pattern
-        for entry in self.local_services_list.iter() {
-            let service_entry = entry.value();
-            let service = &service_entry.service;
-            let path_str = service.path();
+                let search_path = format!("{path_str}/*");
+                let search_topic = TopicPath::new(
+                    &search_path,
+                    &remote_service.service_topic.network_id().to_string(),
+                )
+                .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
+                let service_metadata =
+                    self.get_service_metadata(&search_topic)
+                        .await
+                        .ok_or_else(|| {
+                            anyhow!("Service metadata not found for topic: {}", search_topic)
+                        })?;
 
-            // Skip internal services if not included
-            if !include_internal_services && is_internal_service(path_str) {
-                continue;
+                // Create metadata using individual getter methods from the service
+                result.insert(path_str.to_string(), service_metadata);
             }
-
-            let search_path = format!("{path_str}/*");
-            let search_topic = TopicPath::new(
-                &search_path,
-                &service_entry.service_topic.network_id().to_string(),
-            )
-            .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
-            let service_metadata = self
-                .get_service_metadata(&search_topic)
-                .await
-                .ok_or_else(|| anyhow!("Service metadata not found for topic: {}", search_topic))?;
-
-            // Create metadata using individual getter methods from the service
-            result.insert(path_str.to_string(), service_metadata);
         }
 
         Ok(result)
@@ -1183,8 +1162,9 @@ impl RegistryDelegate for ServiceRegistry {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
-        self.get_all_service_metadata(include_internal_services)
+        self.get_all_service_metadata(include_internal_services, include_remote_services)
             .await
     }
 

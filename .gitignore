@@ -45,3 +45,4 @@ runar-services/node_1_db
 runar-nodejs-api/node_modules/
 
 runar-nodejs-api/**.node
+runar-nodejs-api/tests/node_modules/

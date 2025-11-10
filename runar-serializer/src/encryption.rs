@@ -49,7 +49,7 @@ pub fn encrypt_label_group<T: Serialize>(
     })
 }
 
-/// Attempt to decrypt a label group back into its original struct.  
+/// Attempt to decrypt a label group back into its original struct.
 /// Returns an error if decryption fails, allowing callers to ignore failures
 /// (e.g. when the current context lacks the required keys).
 pub fn decrypt_label_group<T: for<'de> Deserialize<'de> + Default>(

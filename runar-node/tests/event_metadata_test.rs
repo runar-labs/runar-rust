@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
+use runar_logging::{Component, Logger};
 use runar_node::services::service_registry::ServiceRegistry;
 use runar_node::services::{EventContext, EventRegistrationOptions};
 use runar_serializer::ArcValue;

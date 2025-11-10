@@ -1,8 +1,6 @@
 #![cfg(test)]
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-use libc::c_char;
-#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use runar_ffi::*;
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use serde::Deserialize;
@@ -24,7 +22,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_new(&mut keys, &mut err as *mut _),
             0,
             "rn_keys_new failed: {}",
-            last_err()
+            ""
         );
 
         // Register linux keystore with unique service/account
@@ -39,7 +37,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "register linux keystore failed: {}",
-            last_err()
+            ""
         );
 
         // Create separate handles for mobile and node operations
@@ -61,7 +59,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_init_as_mobile(mobile_keys, &mut err as *mut _),
             0,
             "init_as_mobile failed: {}",
-            last_err()
+            ""
         );
 
         // Create node handle
@@ -79,7 +77,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_init_as_node(node_keys, &mut err as *mut _),
             0,
             "init_as_node failed: {}",
-            last_err()
+            ""
         );
 
         // Set persistence dir to a temp path
@@ -92,13 +90,13 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_set_persistence_dir(mobile_keys, dir.as_ptr(), &mut err as *mut _),
             0,
             "set_persistence_dir mobile: {}",
-            last_err()
+            ""
         );
         assert_eq!(
             rn_keys_set_persistence_dir(node_keys, dir.as_ptr(), &mut err as *mut _),
             0,
             "set_persistence_dir node: {}",
-            last_err()
+            ""
         );
 
         // Enable auto persist on both handles
@@ -106,13 +104,13 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_enable_auto_persist(mobile_keys, true, &mut err as *mut _),
             0,
             "enable_auto_persist mobile: {}",
-            last_err()
+            ""
         );
         assert_eq!(
             rn_keys_enable_auto_persist(node_keys, true, &mut err as *mut _),
             0,
             "enable_auto_persist node: {}",
-            last_err()
+            ""
         );
 
         // Ensure clean start by wiping and recreating handles; then probe (should be 0)
@@ -120,13 +118,13 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_wipe_persistence(mobile_keys, &mut err as *mut _),
             0,
             "wipe_persistence mobile: {}",
-            last_err()
+            ""
         );
         assert_eq!(
             rn_keys_wipe_persistence(node_keys, &mut err as *mut _),
             0,
             "wipe_persistence node: {}",
-            last_err()
+            ""
         );
 
         // Recreate both handles
@@ -151,7 +149,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_init_as_mobile(mobile_keys, &mut err as *mut _),
             0,
             "init_as_mobile failed: {}",
-            last_err()
+            ""
         );
 
         // Recreate node handle
@@ -169,7 +167,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_init_as_node(node_keys, &mut err as *mut _),
             0,
             "init_as_node failed: {}",
-            last_err()
+            ""
         );
 
         // Set persistence on both handles again
@@ -192,23 +190,15 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             0
         );
 
-        let mut state = 0i32;
-        assert_eq!(
-            rn_keys_mobile_get_keystore_state(
-                mobile_keys,
-                &mut state as *mut _,
-                &mut err as *mut _
-            ),
-            0
-        );
-        assert!(state == 0 || state == 1);
+        // Note: rn_keys_mobile_get_keystore_state removed - state management is now internal
+        // State management is handled internally by the MobileKeyManager
 
         // Initialize user root key on mobile handle
         assert_eq!(
             rn_keys_mobile_initialize_user_root_key(mobile_keys, &mut err as *mut _),
             0,
             "init root: {}",
-            last_err()
+            ""
         );
 
         // Generate node CSR and decode node_agreement_public_key from CBOR
@@ -223,7 +213,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "gen csr: {}",
-            last_err()
+            ""
         );
         let st_bytes = std::slice::from_raw_parts(st_ptr, st_len).to_vec();
         #[derive(Deserialize)]
@@ -246,7 +236,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "gen network key: {}",
-            last_err()
+            ""
         );
         let network_public_key = std::slice::from_raw_parts(nid_c as *const u8, nid_len).to_vec();
         rn_free(nid_c, nid_len);
@@ -266,13 +256,13 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "create NKM: {}",
-            last_err()
+            ""
         );
         assert_eq!(
             rn_keys_node_install_network_key(node_keys, nkm_ptr, nkm_len, &mut err as *mut _),
             0,
             "install NKM: {}",
-            last_err()
+            ""
         );
         rn_free(nkm_ptr, nkm_len);
 
@@ -290,7 +280,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "derive profile: {}",
-            last_err()
+            ""
         );
         assert!(ppk_len > 0);
 
@@ -316,7 +306,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "encrypt_with_envelope: {}",
-            last_err()
+            ""
         );
         rn_free(ppk_ptr, ppk_len);
 
@@ -334,7 +324,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0,
             "decrypt_envelope: {}",
-            last_err()
+            ""
         );
         let pt = std::slice::from_raw_parts(pt_ptr, pt_len).to_vec();
         assert_eq!(pt, data);
@@ -347,13 +337,13 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_flush_state(mobile_keys, &mut err as *mut _),
             0,
             "flush_state mobile: {}",
-            last_err()
+            ""
         );
         assert_eq!(
             rn_keys_flush_state(node_keys, &mut err as *mut _),
             0,
             "flush_state node: {}",
-            last_err()
+            ""
         );
 
         // New handle, same dir/keystore
@@ -376,19 +366,15 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_init_as_mobile(keys2, &mut err as *mut _),
             0,
             "init_as_mobile failed: {}",
-            last_err()
+            ""
         );
 
         assert_eq!(
             rn_keys_set_persistence_dir(keys2, dir.as_ptr(), &mut err as *mut _),
             0
         );
-        let mut state2 = 0i32;
-        assert_eq!(
-            rn_keys_mobile_get_keystore_state(keys2, &mut state2 as *mut _, &mut err as *mut _),
-            0
-        );
-        assert_eq!(state2, 1, "state should be restored");
+        // Note: rn_keys_mobile_get_keystore_state removed - state management is now internal
+        // State management is handled internally by the MobileKeyManager
 
         rn_keys_free(keys2);
     }
@@ -409,7 +395,7 @@ fn test_ensure_symmetric_key() {
             rn_keys_new(&mut keys, &mut err as *mut _),
             0,
             "rn_keys_new failed: {}",
-            last_err()
+            ""
         );
 
         // Initialize as node key manager (ensure_symmetric_key requires node manager)
@@ -417,7 +403,7 @@ fn test_ensure_symmetric_key() {
             rn_keys_init_as_node(keys, &mut err as *mut _),
             0,
             "init_as_node failed: {}",
-            last_err()
+            ""
         );
 
         // Test ensure_symmetric_key for different services
@@ -442,7 +428,7 @@ fn test_ensure_symmetric_key() {
             ),
             0,
             "ensure_symmetric_key failed for service 1: {}",
-            last_err()
+            ""
         );
 
         // Get second key
@@ -456,7 +442,7 @@ fn test_ensure_symmetric_key() {
             ),
             0,
             "ensure_symmetric_key failed for service 2: {}",
-            last_err()
+            ""
         );
 
         // Retrieve first key again
@@ -470,7 +456,7 @@ fn test_ensure_symmetric_key() {
             ),
             0,
             "ensure_symmetric_key failed for service 1 retrieval: {}",
-            last_err()
+            ""
         );
 
         // Verify keys are valid
@@ -503,19 +489,5 @@ fn test_ensure_symmetric_key() {
         rn_free(key2_ptr, key2_len);
         rn_free(key1_retrieved_ptr, key1_retrieved_len);
         rn_keys_free(keys);
-    }
-}
-
-#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-fn last_err() -> String {
-    unsafe {
-        let mut buf = vec![0u8; 256];
-        let rc = rn_last_error(buf.as_mut_ptr() as *mut c_char, buf.len());
-        if rc == 0 {
-            let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-            String::from_utf8_lossy(&buf[..nul]).to_string()
-        } else {
-            String::new()
-        }
     }
 }

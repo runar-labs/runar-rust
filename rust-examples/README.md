@@ -38,7 +38,7 @@ simulator.print_summary();
 
 ```rust
 use runar_examples::MobileSimulator;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 
 // Create a custom simulation

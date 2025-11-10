@@ -1,38 +1,71 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::{
-    ffi::{c_void, CString},
+    ffi::{c_void, CStr, CString},
     os::raw::c_char,
+    ptr,
     sync::{Arc, RwLock},
 };
 
-use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
-use runar_common::logging::{Component, Logger};
 use runar_keys::keystore;
+use runar_logging::{log_debug, log_error, log_trace, Component, LogLevel, Logger, LoggingConfig};
 
 use runar_keys::{
-    mobile::{MobileKeyManager, NetworkKeyMessage, NodeCertificateMessage, SetupToken},
+    ca_node::CANode,
+    ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest},
+    certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair},
+    mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::NodeKeyManager,
-    EnvelopeCrypto,
+    EnrollmentToken, EnrollmentTokenBody, EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
 
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
-use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
+use runar_transporter::{
+    ca_client::{CaClient, CaClientBuilder},
+    ca_server::CaServer,
+    NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions,
+};
+
+/// FFI wrapper for CA Client with configuration data
+pub struct CaClientWrapper {
+    pub client: CaClient,
+    pub config: runar_transporter::CaClientConfig,
+    pub logger: Arc<Logger>,
+    pub root_ca_cert: Vec<u8>,    // Required, not optional
+    pub issuing_ca_cert: Vec<u8>, // Required, not optional
+    pub node_key_manager: Option<Arc<std::sync::RwLock<NodeKeyManager>>>,
+}
+
+pub struct CaServerWrapper {
+    pub server: CaServer,
+    pub bootstrap_addr: Option<String>,
+    pub authenticated_addr: Option<String>,
+}
+use rustls::crypto::aws_lc_rs;
 use serde_cbor as _; // keep dependency linked for now
                      // panic handling imports removed - no longer needed without ffi_guard
-use std::sync::atomic::AtomicU64;
+use runar_macros_common::VecVecBytes;
 use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
+
+// Serializable version of QuicCertificateConfig for FFI
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QuicConfigSerializable {
+    certificate_chain: Vec<Vec<u8>>,
+    private_key_der: Vec<u8>,
+}
 
 #[repr(C)]
 pub struct RnError {
     pub code: i32,
     pub message: *const c_char,
 }
+
+// C-compatible data structures are defined later in the file
 
 // Error code constants - unique for each error type
 pub const RN_ERROR_NULL_ARGUMENT: i32 = 1;
@@ -47,11 +80,26 @@ pub const RN_ERROR_LOCK_ERROR: i32 = 9;
 pub const RN_ERROR_INVALID_UTF8: i32 = 10;
 pub const RN_ERROR_INVALID_ARGUMENT: i32 = 11;
 
+// CA operation error codes (used in FFI)
+pub const RN_ERROR_ENROLLMENT_TOKEN_INVALID: i32 = 1006;
+pub const RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED: i32 = 1010;
+pub const RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED: i32 = 1011;
+pub const RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED: i32 = 1012;
+pub const RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED: i32 = 1013;
+
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
 // Minimal memory helpers (placeholders; to be filled during implementation)
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
-pub extern "C" fn rn_free(_p: *mut u8, _len: usize) {}
+pub extern "C" fn rn_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Vec::from_raw_parts(ptr, len, len); // This actually frees the memory
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn rn_string_free(s: *const c_char) {
@@ -60,6 +108,32 @@ pub extern "C" fn rn_string_free(s: *const c_char) {
     }
     unsafe {
         let _ = CString::from_raw(s as *mut c_char);
+    }
+}
+
+/// Free the error message inside RnError and null the pointer
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn rn_error_free(err: *mut RnError) {
+    if err.is_null() {
+        return;
+    }
+    unsafe {
+        let msg_ptr = (*err).message as *mut c_char;
+        if !msg_ptr.is_null() {
+            let _ = CString::from_raw(msg_ptr);
+            (*err).message = ptr::null();
+        }
+    }
+}
+
+/// Clear stored last error message (diagnostics helper)
+#[no_mangle]
+pub extern "C" fn rn_clear_error_history() {
+    if let Some(cell) = LAST_ERROR.get() {
+        if let Ok(mut guard) = cell.lock() {
+            *guard = None;
+        }
     }
 }
 
@@ -76,8 +150,6 @@ struct KeysInner {
     mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
-    // Local NodeInfo holder (push-updated from FFI)
-    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
     // Shared device keystore registered at FFI level
     device_keystore: Option<Arc<dyn keystore::DeviceKeystore>>,
     // Persistence directory and auto-persist flag
@@ -86,79 +158,59 @@ struct KeysInner {
 }
 
 // New transport parameter types for CBOR serialization
-#[derive(serde::Serialize, serde::Deserialize)]
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportRequestParams {
     pub path: String,
     pub correlation_id: String,
+    #[serde(with = "serde_bytes")]
     pub payload: Vec<u8>,
     pub dest_peer_id: String,
+    #[serde(with = "serde_bytes")]
     pub network_public_key: Option<Vec<u8>>,
+    #[serde(with = "VecVecBytes")]
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportPublishParams {
     pub path: String,
     pub correlation_id: String,
+    #[serde(with = "serde_bytes")]
     pub payload: Vec<u8>,
     pub dest_peer_id: String,
+    #[serde(with = "serde_bytes")]
     pub network_public_key: Option<Vec<u8>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportCompleteRequestParams {
     pub request_id: String,
+    #[serde(with = "serde_bytes")]
     pub response_payload: Vec<u8>,
+    #[serde(with = "VecVecBytes")]
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 
 // Error types for validation
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum RnErrorType {
-    NullArgument(String),
-    InvalidHandle(String),
     NotInitialized,
     WrongManagerType(String),
-    OperationFailed(String),
-    SerializationFailed(String),
-    KeystoreFailed(String),
-    MemoryAllocation(String),
-    LockError(String),
-    InvalidUtf8(String),
-    InvalidArgument(String),
 }
 
 impl RnErrorType {
     fn code(&self) -> i32 {
         match self {
-            RnErrorType::NullArgument(_) => RN_ERROR_NULL_ARGUMENT,
-            RnErrorType::InvalidHandle(_) => RN_ERROR_INVALID_HANDLE,
             RnErrorType::NotInitialized => RN_ERROR_NOT_INITIALIZED,
             RnErrorType::WrongManagerType(_) => RN_ERROR_WRONG_MANAGER_TYPE,
-            RnErrorType::OperationFailed(_) => RN_ERROR_OPERATION_FAILED,
-            RnErrorType::SerializationFailed(_) => RN_ERROR_SERIALIZATION_FAILED,
-            RnErrorType::KeystoreFailed(_) => RN_ERROR_KEYSTORE_FAILED,
-            RnErrorType::MemoryAllocation(_) => RN_ERROR_MEMORY_ALLOCATION,
-            RnErrorType::LockError(_) => RN_ERROR_LOCK_ERROR,
-            RnErrorType::InvalidUtf8(_) => RN_ERROR_INVALID_UTF8,
-            RnErrorType::InvalidArgument(_) => RN_ERROR_INVALID_ARGUMENT,
         }
     }
 
     fn message(&self) -> String {
         match self {
-            RnErrorType::NullArgument(msg) => msg.clone(),
-            RnErrorType::InvalidHandle(msg) => msg.clone(),
             RnErrorType::NotInitialized => "key manager not initialized".to_string(),
             RnErrorType::WrongManagerType(msg) => msg.clone(),
-            RnErrorType::OperationFailed(msg) => msg.clone(),
-            RnErrorType::SerializationFailed(msg) => msg.clone(),
-            RnErrorType::KeystoreFailed(msg) => msg.clone(),
-            RnErrorType::MemoryAllocation(msg) => msg.clone(),
-            RnErrorType::LockError(msg) => msg.clone(),
-            RnErrorType::InvalidUtf8(msg) => msg.clone(),
-            RnErrorType::InvalidArgument(msg) => msg.clone(),
         }
     }
 }
@@ -178,7 +230,7 @@ fn validate_mobile_manager(
     inner
         .mobile_key_manager
         .as_ref()
-        .ok_or_else(|| RnErrorType::NotInitialized)
+        .ok_or(RnErrorType::NotInitialized)
 }
 
 /// Validate node key manager exists and mobile manager doesn't
@@ -194,36 +246,17 @@ fn validate_node_manager(inner: &KeysInner) -> Result<&Arc<RwLock<NodeKeyManager
     inner
         .node_key_manager
         .as_ref()
-        .ok_or_else(|| RnErrorType::NotInitialized)
-}
-
-/// Helper to work with validated mobile manager
-#[allow(dead_code)]
-fn with_validated_mobile_manager<F>(inner: &KeysInner, f: F) -> Result<(), RnErrorType>
-where
-    F: FnOnce(&mut MobileKeyManager) -> Result<(), RnErrorType>,
-{
-    let manager = validate_mobile_manager(inner)?;
-    let mut mgr = manager
-        .write()
-        .map_err(|_| RnErrorType::LockError("failed to acquire mobile manager lock".into()))?;
-    f(&mut mgr)
-}
-
-/// Helper to work with validated node manager
-#[allow(dead_code)]
-fn with_validated_node_manager<F>(inner: &KeysInner, f: F) -> Result<(), RnErrorType>
-where
-    F: FnOnce(&mut NodeKeyManager) -> Result<(), RnErrorType>,
-{
-    let manager = validate_node_manager(inner)?;
-    let mut mgr = manager
-        .write()
-        .map_err(|_| RnErrorType::LockError("failed to acquire node manager lock".into()))?;
-    f(&mut mgr)
+        .ok_or(RnErrorType::NotInitialized)
 }
 
 // Common keystore registration helpers
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common parameter validation for keystore registration
 unsafe fn validate_keystore_params(
     keys: *mut c_void,
@@ -236,6 +269,13 @@ unsafe fn validate_keystore_params(
     Ok(inner)
 }
 
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common UTF-8 validation for keystore registration
 unsafe fn validate_utf8_string(
     ptr: *const c_char,
@@ -263,22 +303,38 @@ unsafe fn validate_utf8_string(
     }
 }
 
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common manager registration logic
 fn register_keystore_with_managers(
     inner: &mut KeysInner,
     keystore: Arc<dyn keystore::DeviceKeystore>,
 ) {
     if let Some(manager) = &inner.node_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.register_device_keystore(keystore.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.register_device_keystore(Arc::clone(&keystore));
+        }
     }
     if let Some(manager) = &inner.mobile_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.register_device_keystore(keystore.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.register_device_keystore(Arc::clone(&keystore));
+        }
     }
     inner.device_keystore = Some(keystore);
 }
 
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common keystore creation error handling
 fn handle_keystore_creation_error(
     err: *mut RnError,
@@ -293,13 +349,56 @@ fn handle_keystore_creation_error(
     RN_ERROR_KEYSTORE_FAILED
 }
 
-#[allow(dead_code)]
+// Typed event structs carried on per-type channels
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PeerConnectedEvent {
+    pub node_id: String,
+    pub node_info: NodeInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TransportRequestEvent {
+    pub request_id: String,
+    pub source_peer_id: String,
+    pub destination_peer_id: String,
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+    pub profile_public_key: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TransportEventEvent {
+    pub source_peer_id: String,
+    pub destination_peer_id: String,
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TransportResponseEvent {
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+}
+
 struct TransportInner {
-    #[allow(dead_code)]
-    logger: Arc<Logger>,
     transport: Arc<QuicTransport>,
-    events_tx: mpsc::Sender<Vec<u8>>,
-    events_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
+    // per-type channels (transport-specific only)
+    #[allow(dead_code)]
+    peer_connected_tx: mpsc::Sender<PeerConnectedEvent>,
+    peer_connected_rx: Mutex<mpsc::Receiver<PeerConnectedEvent>>,
+    #[allow(dead_code)]
+    peer_disconnected_tx: mpsc::Sender<String>,
+    peer_disconnected_rx: Mutex<mpsc::Receiver<String>>,
+    #[allow(dead_code)]
+    request_tx: mpsc::Sender<TransportRequestEvent>,
+    request_rx: Mutex<mpsc::Receiver<TransportRequestEvent>>,
+    #[allow(dead_code)]
+    event_tx: mpsc::Sender<TransportEventEvent>,
+    event_rx: Mutex<mpsc::Receiver<TransportEventEvent>>,
+    response_tx: mpsc::Sender<TransportResponseEvent>,
+    response_rx: Mutex<mpsc::Receiver<TransportResponseEvent>>,
     pending: Arc<
         Mutex<
             std::collections::HashMap<
@@ -308,17 +407,18 @@ struct TransportInner {
             >,
         >,
     >,
-    #[allow(dead_code)]
-    request_id_seq: Arc<AtomicU64>,
-    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
+    local_node_info: Arc<RwLock<NodeInfo>>,
 }
 
-#[allow(dead_code)]
 struct DiscoveryInner {
-    #[allow(dead_code)]
-    logger: Arc<Logger>,
     discovery: Arc<MulticastDiscovery>,
-    events_tx: Option<mpsc::Sender<Vec<u8>>>,
+    // Discovery event channels
+    discovered_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
+    discovered_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
+    updated_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
+    updated_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
+    lost_tx: mpsc::Sender<String>,
+    lost_rx: Mutex<mpsc::Receiver<String>>,
 }
 
 #[repr(C)]
@@ -334,15 +434,17 @@ fn set_error(err: *mut RnError, code: i32, message: &str) {
     if err.is_null() {
         // still store the message globally
         let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-        let mut guard = cell.lock().unwrap();
-        *guard = Some(message.to_string());
+        if let Ok(mut guard) = cell.lock() {
+            *guard = Some(message.to_string());
+        }
         return;
     }
     let c_msg = CString::new(message).unwrap_or_else(|_| CString::new("ffi error").unwrap());
     // store message globally as well
     let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-    let mut guard = cell.lock().unwrap();
-    *guard = Some(message.to_string());
+    if let Ok(mut guard) = cell.lock() {
+        *guard = Some(message.to_string());
+    }
     unsafe {
         (*err).code = code;
         (*err).message = c_msg.into_raw();
@@ -353,7 +455,10 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
     if out_ptr.is_null() || out_len.is_null() {
         return false;
     }
-    let mut v = Vec::with_capacity(data.len());
+    let mut v: Vec<u8> = Vec::new();
+    if v.try_reserve(data.len()).is_err() {
+        return false;
+    }
     v.extend_from_slice(data);
     let len = v.len();
     let ptr_raw = v.as_mut_ptr();
@@ -366,62 +471,110 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
 }
 
 /// Set local NodeInfo from a CBOR buffer.
-///
-/// Returns 0 on success.
-/// Returns 1 on null/invalid arguments.
-/// Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_set_local_node_info(
-    keys: *mut c_void,
+pub unsafe extern "C" fn rn_set_log_level(level: i32, err: *mut RnError) -> i32 {
+    let log_level = match level {
+        0 => LogLevel::Off,
+        1 => LogLevel::Error,
+        2 => LogLevel::Warn,
+        3 => LogLevel::Info,
+        4 => LogLevel::Debug,
+        5 => LogLevel::Trace,
+        _ => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid log level: {level}. Must be 0-5"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    let logging_config = LoggingConfig::new().with_default_level(log_level);
+    logging_config.apply();
+    0
+}
+
+/// Set local NodeInfo for the transport.
+/// Returns 0 on success, error code on failure.
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_set_local_node_info(
+    transport: *mut c_void,
     node_info_cbor: *const u8,
     len: usize,
+    err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        return 1;
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     };
     if node_info_cbor.is_null() || len == 0 {
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "null or empty node_info_cbor");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let slice = std::slice::from_raw_parts(node_info_cbor, len);
     let info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
         Err(e) => {
-            // Store human-readable error for debugging
-            set_error(std::ptr::null_mut(), 2, &format!("decode NodeInfo: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode NodeInfo: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
-    inner.local_node_info.store(Arc::new(Some(info)));
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 {
-    if out.is_null() || out_len == 0 {
-        return 1;
+    match inner.local_node_info.write() {
+        Ok(mut guard) => {
+            *guard = info;
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to acquire write lock for NodeInfo: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
     }
-    let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-    let msg = cell.lock().unwrap().clone().unwrap_or_default();
-    let bytes = msg.as_bytes();
-    // ensure space for NUL terminator
-    let copy_len = bytes.len().min(out_len.saturating_sub(1));
-    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
-    let end = out.add(copy_len);
-    *end = 0;
     0
 }
 
+// Global logger management
+static GLOBAL_LOGGER: OnceCell<Arc<Logger>> = OnceCell::new();
+
+// Get or create global root logger
+fn get_global_logger() -> Arc<Logger> {
+    GLOBAL_LOGGER
+        .get_or_init(|| Arc::new(Logger::new_root(Component::Custom("ffi"))))
+        .clone()
+}
+
+// Set node ID on root logger (subsequent calls have no effect)
+fn set_global_logger_context(node_id: String) -> Result<(), String> {
+    let logger = get_global_logger();
+    logger.set_context(node_id);
+    Ok(())
+}
+
 #[no_mangle]
-pub extern "C" fn rn_set_log_level(level: i32) {
-    let filter = match level {
-        0 => log::LevelFilter::Off,
-        1 => log::LevelFilter::Error,
-        2 => log::LevelFilter::Warn,
-        3 => log::LevelFilter::Info,
-        4 => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Info,
+pub unsafe extern "C" fn rn_set_logger_context(node_id: *const c_char, err: *mut RnError) -> i32 {
+    if node_id.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Node ID cannot be null");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let node_id_str = unsafe { CStr::from_ptr(node_id) };
+    let node_id_string = match node_id_str.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid UTF-8 in node ID");
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
     };
-    log::set_max_level(filter);
+
+    let _ = set_global_logger_context(node_id_string);
+    0 // Always succeeds (subsequent calls have no effect)
 }
 
 fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool {
@@ -440,6 +593,62 @@ fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool
         }
         Err(_) => false,
     }
+}
+
+fn alloc_string_simple(out_ptr: *mut *mut c_char, s: &str) -> bool {
+    if out_ptr.is_null() {
+        return false;
+    }
+    match CString::new(s) {
+        Ok(cs) => {
+            let raw = cs.into_raw();
+            unsafe {
+                *out_ptr = raw;
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+// ------------------------------
+// C-compatible data structures
+// ------------------------------
+
+/// Custom server config for deserialization
+#[derive(serde::Deserialize)]
+struct CustomCaServerConfig {
+    bootstrap_bind: String,
+    authenticated_bind: String,
+    network_id: String,
+    rate_limit_per_minute: u32,
+    rate_limit_per_hour: u32,
+}
+
+/// FFI-specific transport options configuration for CBOR serialization
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct QuicTransportOptionsConfig {
+    /// Bind address for the transport (e.g., "0.0.0.0:0")
+    pub bind_addr: Option<String>,
+    /// Handshake response timeout in milliseconds
+    pub handshake_timeout_ms: Option<u64>,
+    /// Open stream timeout in milliseconds
+    pub open_stream_timeout_ms: Option<u64>,
+    /// Maximum message size in bytes
+    pub max_message_size: Option<usize>,
+    /// Response cache TTL in milliseconds
+    pub response_cache_ttl_ms: Option<u64>,
+    /// Maximum number of request retries
+    pub max_request_retries: Option<u32>,
+    /// Certificate chain DER data (for testing only)
+    #[serde(with = "runar_macros_common::VecVecBytes")]
+    pub cert_chain_der: Vec<Vec<u8>>,
+    /// Private key DER data (for testing only)
+    #[serde(with = "serde_bytes")]
+    pub private_key_der: Option<Vec<u8>>,
+    /// Root certificates DER data (for testing only)
+    #[serde(with = "runar_macros_common::VecVecBytes")]
+    pub root_certs_der: Vec<Vec<u8>>,
 }
 
 // ------------------------------
@@ -498,11 +707,13 @@ pub unsafe extern "C" fn rn_keys_set_persistence_dir(
 
     // Set persistence directory on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.set_persistence_dir(pb.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.set_persistence_dir(pb.clone());
+        }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.set_persistence_dir(pb.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.set_persistence_dir(pb.clone());
+        }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
@@ -523,11 +734,13 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist(
 
     // Enable auto-persist on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.enable_auto_persist(enabled);
+        if let Ok(mut mgr) = manager.write() {
+            mgr.enable_auto_persist(enabled);
+        }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.enable_auto_persist(enabled);
+        if let Ok(mut mgr) = manager.write() {
+            mgr.enable_auto_persist(enabled);
+        }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
@@ -545,24 +758,26 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
 
     // Wipe persistence from whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.wipe_persistence() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("node wipe_persistence: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.wipe_persistence() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("node wipe_persistence: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.wipe_persistence() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("mobile wipe_persistence: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.wipe_persistence() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("mobile wipe_persistence: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
@@ -576,128 +791,16 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
             &runar_keys::keystore::persistence::Role::Mobile,
         );
         if let Some(manager) = &inner.node_key_manager {
-            let mgr = manager.read().unwrap();
-            let node_id = mgr.get_node_id();
-            let _ = runar_keys::keystore::persistence::wipe(
-                &cfg,
-                &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
-            );
+            if let Ok(mgr) = manager.read() {
+                if let Some(node_id) = mgr.get_node_id() {
+                    let _ = runar_keys::keystore::persistence::wipe(
+                        &cfg,
+                        &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
+                    );
+                }
+            }
         }
     }
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
-    keys: *mut c_void,
-    out_state: *mut i32,
-    err: *mut RnError,
-) -> i32 {
-    // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_state.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_state pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Validate handle upfront
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    // Validate manager upfront - exit early on errors
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    // Main logic - manager is guaranteed to exist
-    let mut node_manager = match manager.write() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    let ready = match node_manager.probe_and_load_state() {
-        Ok(true) => 1i32,
-        Ok(false) => 0i32,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("probe_and_load_state failed: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    *out_state = ready;
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state(
-    keys: *mut c_void,
-    out_state: *mut i32,
-    err: *mut RnError,
-) -> i32 {
-    // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_state.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_state pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Validate handle upfront
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    // Validate manager upfront - exit early on errors
-    let manager = match validate_mobile_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    // Main logic - manager is guaranteed to exist
-    let mut mobile_manager = match manager.write() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    let ready = match mobile_manager.probe_and_load_state() {
-        Ok(true) => 1i32,
-        Ok(false) => 0i32,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("probe_and_load_state failed: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    *out_state = ready;
     0
 }
 
@@ -718,11 +821,17 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
 
     // Get capabilities from whichever manager exists
     let caps = if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.read().unwrap();
-        mgr.get_keystore_caps().unwrap_or_default()
+        if let Ok(mgr) = manager.read() {
+            mgr.get_keystore_caps().unwrap_or_default()
+        } else {
+            runar_keys::keystore::DeviceKeystoreCaps::default()
+        }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.read().unwrap();
-        mgr.get_keystore_caps().unwrap_or_default()
+        if let Ok(mgr) = manager.read() {
+            mgr.get_keystore_caps().unwrap_or_default()
+        } else {
+            runar_keys::keystore::DeviceKeystoreCaps::default()
+        }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
@@ -741,29 +850,32 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
 
     // Flush state on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.flush_state() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("node flush_state: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.flush_state() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("node flush_state: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.flush_state() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("mobile flush_state: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.flush_state() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("mobile flush_state: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
     }
+
     0
 }
 
@@ -915,7 +1027,7 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
     };
 
     // Process profile keys
-    let mut profiles: Vec<Vec<u8>> = Vec::new();
+    let mut profiles: Vec<Vec<u8>> = Vec::with_capacity(profiles_count);
     if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
         for i in 0..profiles_count {
             let pk_ptr = unsafe { *profile_pks.add(i) };
@@ -1053,7 +1165,7 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
     };
 
     // Process profile keys
-    let mut profiles: Vec<Vec<u8>> = Vec::new();
+    let mut profiles: Vec<Vec<u8>> = Vec::with_capacity(profiles_count);
     if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
         for i in 0..profiles_count {
             let pk_ptr = unsafe { *profile_pks.add(i) };
@@ -1365,8 +1477,8 @@ pub unsafe extern "C" fn rn_keys_mobile_initialize_user_root_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
@@ -1407,8 +1519,8 @@ pub unsafe extern "C" fn rn_keys_mobile_get_user_public_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
@@ -1454,12 +1566,12 @@ pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     if label.is_null() || out_pk.is_null() || out_len.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
@@ -1567,7 +1679,6 @@ pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
         }
     }
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
     keys: *mut c_void,
@@ -1638,16 +1749,41 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
     keys: *mut c_void,
     network_public_key: *const u8,
     network_public_key_len: usize,
-    out_pk: *mut *mut u8,
-    out_len: *mut usize,
+    out_has_key: *mut i32,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger =
+        root_logger.with_component(Component::Custom("rn_keys_mobile_has_network_private_key"));
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Starting function"
+    );
+    log_trace!(logger, "  keys: {:?}", keys);
+    log_trace!(logger, "  network_public_key: {:?}", network_public_key);
+    log_trace!(
+        logger,
+        "  network_public_key_len: {}",
+        network_public_key_len
+    );
+    log_trace!(logger, "  out_has_key: {:?}", out_has_key);
+    log_trace!(logger, "  err: {:?}", err);
+
     // Validate parameters upfront - specific error messages
     if keys.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: keys handle is null"
+        );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
     if network_public_key.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: network_public_key pointer is null"
+        );
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
@@ -1655,59 +1791,110 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
         );
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if out_pk.is_null() {
+    if out_has_key.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: output has_key pointer is null"
+        );
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
-            "output public key pointer is null",
+            "output has_key pointer is null",
         );
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Parameter validation passed"
+    );
 
     let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: keys handle is null in with_keys_inner"
+        );
         set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return RN_ERROR_INVALID_HANDLE;
     };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Got keys inner"
+    );
+
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_has_network_private_key: validate_mobile_manager failed: {}",
+                e.message()
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Mobile manager validated"
+    );
+
     let mobile_manager = match manager.read() {
         Ok(mgr) => mgr,
         Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_has_network_private_key: failed to acquire lock"
+            );
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
-    let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Got mobile manager lock"
+    );
 
-    match mobile_manager.has_network_private_key(network_pk) {
-        Ok(pk) => {
-            if !alloc_bytes(out_pk, out_len, &pk) {
-                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                RN_ERROR_MEMORY_ALLOCATION
-            } else {
-                0
-            }
-        }
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("has_network_private_key failed: {e}"),
-            );
-            RN_ERROR_OPERATION_FAILED
-        }
+    let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: network_pk len: {}",
+        network_pk.len()
+    );
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: network_pk first 8 bytes: {:?}",
+        &network_pk[..std::cmp::min(8, network_pk.len())]
+    );
+
+    let has_key = mobile_manager.has_network_private_key(network_pk);
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: mobile_manager.has_network_private_key returned: {}", has_key);
+
+    let result_value = if has_key { 1 } else { 0 };
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: result_value: {}",
+        result_value
+    );
+
+    unsafe {
+        *out_has_key = result_value;
+        log_trace!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: wrote {} to out_has_key at {:?}",
+            result_value,
+            out_has_key
+        );
     }
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: returning 0 (success)"
+    );
+    0
 }
 
 #[no_mangle]
@@ -1780,56 +1967,175 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
     0
 }
 
+/// Get network public key by network ID for mobile key manager
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_install_network_key(
+pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key_by_id(
     keys: *mut c_void,
-    nkm_cbor: *const u8,
-    nkm_len: usize,
+    network_id: *const std::os::raw::c_char,
+    out_public_key: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if nkm_cbor.is_null() || nkm_len == 0 {
-        set_error(err, 1, "null argument");
-        return 1;
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom(
+        "rn_keys_mobile_get_network_public_key_by_id",
+    ));
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Starting function"
+    );
+    log_trace!(logger, "  keys: {:?}", keys);
+    log_trace!(logger, "  network_id: {:?}", network_id);
+
+    // Validate parameters upfront
+    if keys.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: keys handle is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
-    let slice = std::slice::from_raw_parts(nkm_cbor, nkm_len);
-    let msg: NetworkKeyMessage = match serde_cbor::from_slice(slice) {
-        Ok(m) => m,
-        Err(e) => {
-            set_error(err, 2, &format!("decode NetworkKeyMessage failed: {e}"));
-            return 2;
-        }
+    if network_id.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: network_id pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_public_key.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: output public_key pointer is null"
+        );
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output public_key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: output length pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Parameter validation passed"
+    );
+
+    let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: keys handle is null in with_keys_inner"
+        );
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
-    let manager = match validate_node_manager(inner) {
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Got keys inner"
+    );
+
+    let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_get_network_public_key_by_id: validate_mobile_manager failed: {}",
+                e.message()
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
-    let mut node_manager = match manager.write() {
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Mobile manager validated"
+    );
+
+    let mobile_manager = match manager.read() {
         Ok(mgr) => mgr,
         Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_get_network_public_key_by_id: failed to acquire lock"
+            );
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
-    match node_manager.install_network_key(msg) {
-        Ok(_) => 0,
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Got mobile manager lock"
+    );
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_get_network_public_key_by_id: invalid UTF-8 in network_id: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                "invalid UTF-8 in network_id",
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: network_id: {}",
+        network_id_str
+    );
+
+    let public_key = match mobile_manager.get_network_public_key_by_id(network_id_str) {
+        Ok(pk) => pk,
+        Err(e) => {
+            log_error!(logger, "rn_keys_mobile_get_network_public_key_by_id: get_network_public_key_by_id failed: {}", e);
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
-                &format!("install_network_key failed: {e}"),
+                &format!("get_network_public_key_by_id failed: {e}"),
             );
-            RN_ERROR_OPERATION_FAILED
+            return RN_ERROR_OPERATION_FAILED;
         }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: public_key len: {}",
+        public_key.len()
+    );
+
+    if !alloc_bytes(out_public_key, out_len, &public_key) {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: alloc_bytes failed"
+        );
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: returning 0 (success)"
+    );
+    0
 }
 
 #[no_mangle]
@@ -2206,99 +2512,6 @@ pub unsafe extern "C" fn rn_keys_mobile_decrypt_message_from_node(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_encrypt_for_public_key(
-    keys: *mut c_void,
-    data: *const u8,
-    data_len: usize,
-    recipient_public_key: *const u8,
-    pk_len: usize,
-    out_eed_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if data.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if recipient_public_key.is_null() {
-        set_error(
-            err,
-            RN_ERROR_NULL_ARGUMENT,
-            "recipient public key pointer is null",
-        );
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_eed_cbor.is_null() {
-        set_error(
-            err,
-            RN_ERROR_NULL_ARGUMENT,
-            "output EED CBOR pointer is null",
-        );
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    let data_slice = std::slice::from_raw_parts(data, data_len);
-    let pk = std::slice::from_raw_parts(recipient_public_key, pk_len);
-
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    let node_manager = match manager.read() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    let eed = match node_manager.encrypt_for_public_key(data_slice, pk) {
-        Ok(v) => v,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("encrypt_for_public_key failed: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-    let cbor = match serde_cbor::to_vec(&eed) {
-        Ok(v) => v,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_SERIALIZATION_FAILED,
-                &format!("encode EED failed: {e}"),
-            );
-            return RN_ERROR_SERIALIZATION_FAILED;
-        }
-    };
-    if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
-        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-        return RN_ERROR_MEMORY_ALLOCATION;
-    }
-    0
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn rn_keys_encrypt_for_network(
     keys: *mut c_void,
     data: *const u8,
@@ -2389,7 +2602,6 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
     }
     0
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_decrypt_network_data(
     keys: *mut c_void,
@@ -2466,69 +2678,25 @@ pub unsafe extern "C" fn rn_keys_decrypt_network_data(
     }
     0
 }
-fn parse_discovery_options(cbor: &[u8]) -> DiscoveryOptions {
-    let mut opts = DiscoveryOptions::default();
-    if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(cbor) {
-        for (k, v) in m {
-            if let serde_cbor::Value::Text(s) = k {
-                match s.as_str() {
-                    "announce_interval_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                opts.announce_interval = std::time::Duration::from_millis(ms as u64)
-                            }
-                        }
-                    }
-                    "discovery_timeout_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                opts.discovery_timeout = std::time::Duration::from_millis(ms as u64)
-                            }
-                        }
-                    }
-                    "debounce_window_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                opts.debounce_window = std::time::Duration::from_millis(ms as u64)
-                            }
-                        }
-                    }
-                    "use_multicast" => {
-                        if let serde_cbor::Value::Bool(b) = v {
-                            opts.use_multicast = b
-                        }
-                    }
-                    "local_network_only" => {
-                        if let serde_cbor::Value::Bool(b) = v {
-                            opts.local_network_only = b
-                        }
-                    }
-                    "multicast_group" => {
-                        if let serde_cbor::Value::Text(addr) = v {
-                            opts.multicast_group = addr
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    opts
-}
 
 // ffi_guard removed - violates design principles by preventing proper error handling flow
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_discovery_new_with_multicast(
-    keys: *mut c_void,
+    peer_info_cbor: *const u8,
+    peer_info_len: usize,
     options_cbor: *const u8,
     options_len: usize,
     out_discovery: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
     // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+    if peer_info_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "peer_info CBOR pointer is null",
+        );
         return RN_ERROR_NULL_ARGUMENT;
     }
     if options_cbor.is_null() {
@@ -2544,54 +2712,37 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let Some(keys_inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    let slice = std::slice::from_raw_parts(options_cbor, options_len);
-    let opts = parse_discovery_options(slice);
-
-    // Build local peer info from node keys and provided addresses if any
-    let mut addresses: Vec<String> = Vec::new();
-    if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(slice) {
-        for (k, v) in m {
-            if let serde_cbor::Value::Text(s) = k {
-                if s == "local_addresses" {
-                    if let serde_cbor::Value::Array(arr) = v {
-                        for it in arr {
-                            if let serde_cbor::Value::Text(a) = it {
-                                addresses.push(a)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let manager = match validate_node_manager(keys_inner) {
-        Ok(mgr) => mgr,
+    // Parse peer info from CBOR
+    let peer_info_slice = std::slice::from_raw_parts(peer_info_cbor, peer_info_len);
+    let local_peer: PeerInfo = match serde_cbor::from_slice(peer_info_slice) {
+        Ok(peer) => peer,
         Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse peer info: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
         }
     };
 
-    let node_manager = match manager.read() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
+    // Parse discovery options from CBOR
+    let options_slice = std::slice::from_raw_parts(options_cbor, options_len);
+    let opts: DiscoveryOptions = match serde_cbor::from_slice(options_slice) {
+        Ok(options) => options,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse discovery options: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
         }
     };
 
-    let node_pk = node_manager.get_node_public_key();
+    let root_logger = get_global_logger();
+    let logger = Arc::new(root_logger.with_component(Component::NetworkDiscovery));
 
-    let local_peer = PeerInfo {
-        public_key: node_pk,
-        addresses,
-    };
-    let logger = keys_inner.logger.as_ref().clone();
     let disc = match runtime().block_on(MulticastDiscovery::new(local_peer, opts, logger)) {
         Ok(d) => Arc::new(d),
         Err(e) => {
@@ -2603,10 +2754,20 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
             return RN_ERROR_OPERATION_FAILED;
         }
     };
+
+    // Create discovery event channels
+    let (discovered_tx, discovered_rx) = mpsc::channel(1024);
+    let (updated_tx, updated_rx) = mpsc::channel(1024);
+    let (lost_tx, lost_rx) = mpsc::channel(1024);
+
     let inner = DiscoveryInner {
-        logger: keys_inner.logger.clone(),
         discovery: disc,
-        events_tx: None,
+        discovered_tx,
+        discovered_rx: Mutex::new(discovered_rx),
+        updated_tx,
+        updated_rx: Mutex::new(updated_rx),
+        lost_tx,
+        lost_rx: Mutex::new(lost_rx),
     };
     let handle = FfiDiscoveryHandle {
         inner: Box::into_raw(Box::new(inner)),
@@ -2664,7 +2825,17 @@ pub unsafe extern "C" fn rn_discovery_init(
         return RN_ERROR_INVALID_HANDLE;
     };
     let slice = std::slice::from_raw_parts(options_cbor, options_len);
-    let opts = parse_discovery_options(slice);
+    let opts: DiscoveryOptions = match serde_cbor::from_slice(slice) {
+        Ok(options) => options,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse discovery options: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
     if let Err(e) = runtime().block_on(inner.discovery.init(opts)) {
         set_error(err, RN_ERROR_OPERATION_FAILED, &format!("init failed: {e}"));
         return RN_ERROR_OPERATION_FAILED;
@@ -2673,9 +2844,8 @@ pub unsafe extern "C" fn rn_discovery_init(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
+pub unsafe extern "C" fn rn_discovery_bind_events(
     discovery: *mut c_void,
-    transport: *mut c_void,
     err: *mut RnError,
 ) -> i32 {
     // Validate parameters upfront - specific error messages
@@ -2683,80 +2853,36 @@ pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
         set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if transport.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
 
     let Some(disc) = with_discovery_inner(discovery) else {
         set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
         return RN_ERROR_INVALID_HANDLE;
     };
-    let t = &mut *(transport as *mut FfiTransportHandle);
-    if t.inner.is_null() {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    let tx = unsafe { &*t.inner }.events_tx.clone();
-    disc.events_tx = Some(tx.clone());
 
-    // Subscribe discovery events to emit into transport poll channel
-    let emitter = tx.clone();
+    // Subscribe discovery events to emit into discovery's own channels
+    let discovered_tx = disc.discovered_tx.clone();
+    let updated_tx = disc.updated_tx.clone();
+    let lost_tx = disc.lost_tx.clone();
+
     let listener: runar_transporter::discovery::DiscoveryListener = Arc::new(move |ev| {
-        let emitter = emitter.clone();
+        let discovered_tx = discovered_tx.clone();
+        let updated_tx = updated_tx.clone();
+        let lost_tx = lost_tx.clone();
         Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
             match ev {
                 DiscoveryEvent::Discovered(peer) => {
-                    map.insert(
-                        serde_cbor::Value::Text("type".into()),
-                        serde_cbor::Value::Text("PeerDiscovered".into()),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("v".into()),
-                        serde_cbor::Value::Integer(1),
-                    );
-                    let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
-                    map.insert(
-                        serde_cbor::Value::Text("peer_info".into()),
-                        serde_cbor::Value::Bytes(pi),
-                    );
+                    let _ = discovered_tx.send(peer).await;
                 }
                 DiscoveryEvent::Updated(peer) => {
-                    map.insert(
-                        serde_cbor::Value::Text("type".into()),
-                        serde_cbor::Value::Text("PeerUpdated".into()),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("v".into()),
-                        serde_cbor::Value::Integer(1),
-                    );
-                    let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
-                    map.insert(
-                        serde_cbor::Value::Text("peer_info".into()),
-                        serde_cbor::Value::Bytes(pi),
-                    );
+                    let _ = updated_tx.send(peer).await;
                 }
                 DiscoveryEvent::Lost(node_id) => {
-                    map.insert(
-                        serde_cbor::Value::Text("type".into()),
-                        serde_cbor::Value::Text("PeerLost".into()),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("v".into()),
-                        serde_cbor::Value::Integer(1),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("peer_node_id".into()),
-                        serde_cbor::Value::Text(node_id),
-                    );
+                    let _ = lost_tx.send(node_id).await;
                 }
             }
-            let _ = emitter
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                .await;
         })
     });
+
     // Register subscription
     if let Err(e) = runtime().block_on(disc.discovery.subscribe(listener)) {
         set_error(
@@ -2891,6 +3017,145 @@ pub unsafe extern "C" fn rn_discovery_update_local_peer_info(
     }
     0
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_poll_discovered(
+    discovery: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.discovered_rx.lock());
+    match rx.try_recv() {
+        Ok(peer) => match serde_cbor::to_vec(&peer) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_poll_updated(
+    discovery: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.updated_rx.lock());
+    match rx.try_recv() {
+        Ok(peer) => match serde_cbor::to_vec(&peer) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_poll_lost(
+    discovery: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.lost_rx.lock());
+    match rx.try_recv() {
+        Ok(node_id) => match serde_cbor::to_vec(&node_id) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
 // Old implementation removed; now use the keys_new_impl wrapper below
 
 #[no_mangle]
@@ -2909,14 +3174,13 @@ pub extern "C" fn rn_keys_free(keys: *mut c_void) {
 
 /// Internal helper that constructs a new keys handle and sets error on failure.
 fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
-    let logger = Arc::new(Logger::new_root(Component::Keys));
+    let root_logger = get_global_logger();
+    let logger = Arc::new(root_logger.with_component(Component::Keys));
 
     let inner = KeysInner {
         logger,
         mobile_key_manager: None,
         node_key_manager: None,
-
-        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
         persistence_dir: None,
         auto_persist: true,
@@ -2933,7 +3197,7 @@ fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
 pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnError) -> i32 {
     let ptr = keys_new_impl(err);
     if ptr.is_null() {
-        return 1;
+        return RN_ERROR_INVALID_HANDLE;
     }
     unsafe {
         *out_keys = ptr;
@@ -2966,11 +3230,11 @@ pub unsafe extern "C" fn rn_keys_init_as_mobile(keys: *mut c_void, err: *mut RnE
     }
 
     // Initialize mobile manager
-    match MobileKeyManager::new(inner.logger.clone()) {
+    match MobileKeyManager::new(Arc::clone(&inner.logger)) {
         Ok(mut manager) => {
             // Apply existing configuration
             if let Some(ks) = &inner.device_keystore {
-                manager.register_device_keystore(ks.clone());
+                manager.register_device_keystore(Arc::clone(ks));
             }
             if let Some(dir) = &inner.persistence_dir {
                 manager.set_persistence_dir(dir.clone());
@@ -3015,17 +3279,42 @@ pub unsafe extern "C" fn rn_keys_init_as_node(keys: *mut c_void, err: *mut RnErr
         return 0; // Already initialized correctly
     }
 
-    // Initialize node manager
-    match NodeKeyManager::new(inner.logger.clone()) {
+    // Initialize node manager following new lifecycle
+    match NodeKeyManager::new(Arc::clone(&inner.logger)) {
         Ok(mut manager) => {
-            // Apply existing configuration
+            // Apply existing configuration first
             if let Some(ks) = &inner.device_keystore {
-                manager.register_device_keystore(ks.clone());
+                manager.register_device_keystore(Arc::clone(ks));
             }
             if let Some(dir) = &inner.persistence_dir {
                 manager.set_persistence_dir(dir.clone());
             }
             manager.enable_auto_persist(inner.auto_persist);
+
+            // Follow new lifecycle: probe_and_load_state first, then generate_keys if needed
+            match manager.probe_and_load_state() {
+                Ok(ready) => {
+                    if !ready {
+                        // Generate keys only when needed
+                        if let Err(e) = manager.generate_keys() {
+                            set_error(
+                                err,
+                                RN_ERROR_OPERATION_FAILED,
+                                &format!("Failed to generate keys: {e}"),
+                            );
+                            return RN_ERROR_OPERATION_FAILED;
+                        }
+                    }
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to probe and load state: {e}"),
+                    );
+                    return RN_ERROR_OPERATION_FAILED;
+                }
+            }
 
             inner.node_key_manager = Some(Arc::new(RwLock::new(manager)));
             0
@@ -3055,6 +3344,20 @@ fn with_keys_inner<'a>(keys: *mut c_void) -> Option<&'a mut KeysInner> {
     }
 }
 
+fn with_transport_inner<'a>(transport: *mut c_void) -> Option<&'a mut TransportInner> {
+    if transport.is_null() {
+        return None;
+    }
+    unsafe {
+        let handle = &mut *(transport as *mut FfiTransportHandle);
+        if handle.inner.is_null() {
+            None
+        } else {
+            Some(&mut *handle.inner)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn rn_keys_node_get_public_key(
     keys: *mut c_void,
@@ -3063,8 +3366,8 @@ pub extern "C" fn rn_keys_node_get_public_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     let manager = match validate_node_manager(inner) {
         Ok(mgr) => mgr,
@@ -3082,7 +3385,17 @@ pub extern "C" fn rn_keys_node_get_public_key(
         }
     };
 
-    let pk = node_manager.get_node_public_key();
+    let pk = match node_manager.get_node_public_key() {
+        Some(pk) => pk,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Node keys not available - call rn_keys_node_generate_keys first",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
     if !alloc_bytes(out, out_len, &pk) {
         set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
         return RN_ERROR_MEMORY_ALLOCATION;
@@ -3098,8 +3411,8 @@ pub extern "C" fn rn_keys_node_get_agreement_public_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     let manager = match validate_node_manager(inner) {
         Ok(mgr) => mgr,
@@ -3129,22 +3442,38 @@ pub extern "C" fn rn_keys_node_get_agreement_public_key(
         }
     };
     if !alloc_bytes(out, out_len, &pk) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
-
 #[no_mangle]
-pub extern "C" fn rn_keys_node_get_node_id(
+pub unsafe extern "C" fn rn_keys_node_get_node_id(
     keys: *mut c_void,
-    out_str: *mut *mut c_char,
-    out_len: *mut usize,
+    out_id: *mut *mut c_char,
+    out_has_id: *mut i32,
     err: *mut RnError,
 ) -> i32 {
+    // Validate parameters upfront
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_id.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_has_id.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_has_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if err.is_null() {
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     let manager = match validate_node_manager(inner) {
         Ok(mgr) => mgr,
@@ -3162,12 +3491,29 @@ pub extern "C" fn rn_keys_node_get_node_id(
         }
     };
 
-    let node_id = node_manager.get_node_id();
-    if !alloc_string(out_str, out_len, &node_id) {
-        set_error(err, 3, "invalid out pointers or string alloc failed");
-        return 3;
+    match node_manager.get_node_id() {
+        Some(node_id) => {
+            if !alloc_string_simple(out_id, &node_id) {
+                set_error(
+                    err,
+                    RN_ERROR_MEMORY_ALLOCATION,
+                    "invalid out pointers or string alloc failed",
+                );
+                return RN_ERROR_MEMORY_ALLOCATION;
+            }
+            unsafe {
+                *out_has_id = 1;
+            }
+            0
+        }
+        None => {
+            unsafe {
+                *out_id = ptr::null_mut();
+                *out_has_id = 0;
+            }
+            0
+        }
     }
-    0
 }
 
 #[no_mangle]
@@ -3177,29 +3523,76 @@ pub extern "C" fn rn_keys_node_generate_csr(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_node_generate_csr"));
+
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        log_error!(logger, "rn_keys_node_generate_csr: keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: keys handle validated, inner: {:p}",
+        inner
+    );
+
     let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_generate_csr: node manager validated successfully"
+            );
+            mgr
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: failed to validate node manager: {}",
+                e.message()
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: acquiring write lock on node manager"
+    );
     let mut node_manager = match manager.write() {
-        Ok(mgr) => mgr,
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_generate_csr: write lock acquired successfully"
+            );
+            mgr
+        }
         Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: failed to acquire write lock"
+            );
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: calling node_manager.generate_csr()"
+    );
     let token = match node_manager.generate_csr() {
-        Ok(t) => t,
+        Ok(t) => {
+            log_trace!(logger, "rn_keys_node_generate_csr: generate_csr succeeded");
+            t
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: generate_csr failed: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -3208,17 +3601,53 @@ pub extern "C" fn rn_keys_node_generate_csr(
             return RN_ERROR_OPERATION_FAILED;
         }
     };
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: serializing token to CBOR"
+    );
     let cbor = match serde_cbor::to_vec(&token) {
-        Ok(v) => v,
+        Ok(v) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_generate_csr: token serialized to {} bytes",
+                v.len()
+            );
+            v
+        }
         Err(e) => {
-            set_error(err, 2, &format!("Failed to encode SetupToken: {e}"));
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: failed to serialize token: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to encode SetupToken: {e}"),
+            );
             return 2;
         }
     };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: allocating {} bytes for output",
+        cbor.len()
+    );
     if !alloc_bytes(out_st_cbor, out_len, &cbor) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        log_error!(
+            logger,
+            "rn_keys_node_generate_csr: failed to allocate output bytes"
+        );
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
+
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: returning success with {} bytes",
+        cbor.len()
+    );
     0
 }
 
@@ -3232,18 +3661,22 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     if st_cbor.is_null() {
-        set_error(err, 4, "st_cbor is null");
-        return 4;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "st_cbor is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
     let slice = std::slice::from_raw_parts(st_cbor, st_len);
     let token: SetupToken = match serde_cbor::from_slice(slice) {
         Ok(t) => t,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to decode SetupToken: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode SetupToken: {e}"),
+            );
             return 2;
         }
     };
@@ -3285,40 +3718,38 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
         }
     };
     if !alloc_bytes(out_ncm_cbor, out_len, &cbor) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
 
+/// Convert enrollment response to certificate message
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_install_certificate(
-    keys: *mut c_void,
-    ncm_cbor: *const u8,
-    ncm_len: usize,
+pub unsafe extern "C" fn rn_keys_mobile_from_enroll_response(
+    mobile: *mut c_void,
+    response: *const u8,
+    response_len: usize,
+    out_cert_message: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if ncm_cbor.is_null() {
-        set_error(err, 4, "ncm_cbor is null");
-        return 4;
+    if mobile.is_null()
+        || response.is_null()
+        || out_cert_message.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
     }
-    let slice = std::slice::from_raw_parts(ncm_cbor, ncm_len);
-    let msg: NodeCertificateMessage = match serde_cbor::from_slice(slice) {
-        Ok(m) => m,
-        Err(e) => {
-            set_error(
-                err,
-                2,
-                &format!("Failed to decode NodeCertificateMessage: {e}"),
-            );
-            return 2;
-        }
+
+    let Some(inner) = with_keys_inner(mobile) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "mobile handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
     };
-    let manager = match validate_node_manager(inner) {
+
+    let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
             set_error(err, e.code(), &e.message());
@@ -3326,7 +3757,7 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
         }
     };
 
-    let mut node_manager = match manager.write() {
+    let mobile_manager = match manager.read() {
         Ok(mgr) => mgr,
         Err(_) => {
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
@@ -3334,146 +3765,273 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
         }
     };
 
-    if let Err(e) = node_manager.install_certificate(msg) {
+    // Parse the enrollment response
+    let response_data = std::slice::from_raw_parts(response, response_len);
+    let enroll_response =
+        match serde_cbor::from_slice::<runar_keys::ca_node_types::CsrEnrollResponse>(response_data)
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                    &format!("Failed to parse enrollment response: {e}"),
+                );
+                return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+            }
+        };
+
+    // Convert to certificate message
+    let cert_message = match mobile_manager.from_enroll_response(&enroll_response) {
+        Ok(msg) => msg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to convert enrollment response: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    // Serialize to CBOR
+    let cbor = match serde_cbor::to_vec(&cert_message) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to serialize certificate message: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_cert_message, out_len, &cbor) {
         set_error(
             err,
-            RN_ERROR_OPERATION_FAILED,
-            &format!("Failed to install certificate: {e}"),
+            RN_ERROR_MEMORY_ALLOCATION,
+            "failed to allocate memory for certificate message",
         );
-        return RN_ERROR_OPERATION_FAILED;
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
+
     0
 }
 
+/// Convert renewal response to certificate message
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_from_renew_response(
+    mobile: *mut c_void,
+    response: *const u8,
+    response_len: usize,
+    out_cert_message: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if mobile.is_null()
+        || response.is_null()
+        || out_cert_message.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(mobile) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "mobile handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse the renewal response
+    let response_data = std::slice::from_raw_parts(response, response_len);
+    let renew_response =
+        match serde_cbor::from_slice::<runar_keys::ca_node_types::RenewResponse>(response_data) {
+            Ok(resp) => resp,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                    &format!("Failed to parse renewal response: {e}"),
+                );
+                return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+            }
+        };
+
+    // Convert to certificate message
+    let cert_message = match mobile_manager.from_renew_response(&renew_response) {
+        Ok(msg) => msg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to convert renewal response: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    // Serialize to CBOR
+    let cbor = match serde_cbor::to_vec(&cert_message) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to serialize certificate message: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_cert_message, out_len, &cbor) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "failed to allocate memory for certificate message",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
 // Removed legacy state import/export APIs (no backwards compatibility)
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_new_with_keys(
     keys: *mut c_void,
+    node_info_cbor: *const u8,
+    node_info_len: usize,
     options_cbor: *const u8,
     options_len: usize,
     out_transport: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if keys.is_null() || options_cbor.is_null() || out_transport.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+    if keys.is_null()
+        || node_info_cbor.is_null()
+        || node_info_len == 0
+        || options_cbor.is_null()
+        || out_transport.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     // Read keys
     let Some(keys_inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "invalid keys handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
     };
-    // Parse options from CBOR map { bind_addr, timeouts, max_message_size }
-    let slice = std::slice::from_raw_parts(options_cbor, options_len);
-    let mut options = QuicTransportOptions::new();
-    // Minimal: expect a CBOR map with optional fields
-    let value: serde_cbor::Value = match serde_cbor::from_slice(slice) {
+    // Parse NodeInfo
+    let ni_slice = std::slice::from_raw_parts(node_info_cbor, node_info_len);
+    let initial_node_info: NodeInfo = match serde_cbor::from_slice(ni_slice) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to decode options: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode NodeInfo: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
-    if let serde_cbor::Value::Map(m) = value {
-        for (k, v) in m {
-            if let serde_cbor::Value::Text(s) = k {
-                match s.as_str() {
-                    "bind_addr" => {
-                        if let serde_cbor::Value::Text(addr) = v {
-                            if let Ok(sock) = addr.parse() {
-                                options = options.with_bind_addr(sock);
-                            }
-                        }
-                    }
-                    "handshake_timeout_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                options = options.with_handshake_response_timeout(
-                                    std::time::Duration::from_millis(ms as u64),
-                                );
-                            }
-                        }
-                    }
-                    "open_stream_timeout_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                options = options.with_open_stream_timeout(
-                                    std::time::Duration::from_millis(ms as u64),
-                                );
-                            }
-                        }
-                    }
-                    "max_message_size" => {
-                        if let serde_cbor::Value::Integer(sz) = v {
-                            if sz > 0 {
-                                options = options.with_max_message_size(sz as usize);
-                            }
-                        }
-                    }
-                    "response_cache_ttl_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                options = options.with_response_cache_ttl(
-                                    std::time::Duration::from_millis(ms as u64),
-                                );
-                            }
-                        }
-                    }
-                    "max_request_retries" => {
-                        if let serde_cbor::Value::Integer(n) = v {
-                            if n >= 0 {
-                                options = options.with_max_request_retries(n as u32);
-                            }
-                        }
-                    }
-                    "log_level" => {
-                        if let serde_cbor::Value::Integer(lvl) = v {
-                            let lf = match lvl {
-                                0 => log::LevelFilter::Off,
-                                1 => log::LevelFilter::Error,
-                                2 => log::LevelFilter::Warn,
-                                3 => log::LevelFilter::Info,
-                                4 => log::LevelFilter::Debug,
-                                _ => log::LevelFilter::Info,
-                            };
-                            log::set_max_level(lf);
-                        }
-                    }
-                    // Inline certs (discouraged in production; for testing)
-                    "cert_chain_der" => {
-                        if let serde_cbor::Value::Array(arr) = v {
-                            let mut certs = Vec::new();
-                            for item in arr {
-                                if let serde_cbor::Value::Bytes(b) = item {
-                                    certs.push(rustls_pki_types::CertificateDer::from(b));
-                                }
-                            }
-                            options = options.with_certificates(certs);
-                        }
-                    }
-                    "private_key_der" => {
-                        if let serde_cbor::Value::Bytes(b) = v {
-                            // Assume PKCS#8 for FFI simplicity
-                            let pk = rustls_pki_types::PrivatePkcs8KeyDer::from(b);
-                            options = options.with_private_key(pk.into());
-                        }
-                    }
-                    "root_certs_der" => {
-                        if let serde_cbor::Value::Array(arr) = v {
-                            let mut certs = Vec::new();
-                            for item in arr {
-                                if let serde_cbor::Value::Bytes(b) = item {
-                                    certs.push(rustls_pki_types::CertificateDer::from(b));
-                                }
-                            }
-                            options = options.with_root_certificates(certs);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+    // Parse transport options from CBOR using proper struct serialization
+    let slice = std::slice::from_raw_parts(options_cbor, options_len);
+    let config: QuicTransportOptionsConfig = match serde_cbor::from_slice(slice) {
+        Ok(config) => config,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to parse transport options: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
+    };
+
+    // Convert config to QuicTransportOptions
+    let mut options = QuicTransportOptions::new();
+
+    // Set bind address if provided
+    if let Some(bind_addr_str) = config.bind_addr {
+        if let Ok(sock) = bind_addr_str.parse() {
+            options = options.with_bind_addr(sock);
+        }
+    }
+
+    // Set handshake timeout if provided
+    if let Some(ms) = config.handshake_timeout_ms {
+        if ms > 0 {
+            options = options.with_handshake_response_timeout(std::time::Duration::from_millis(ms));
+        }
+    }
+
+    // Set open stream timeout if provided
+    if let Some(ms) = config.open_stream_timeout_ms {
+        if ms > 0 {
+            options = options.with_open_stream_timeout(std::time::Duration::from_millis(ms));
+        }
+    }
+
+    // Set max message size if provided
+    if let Some(sz) = config.max_message_size {
+        if sz > 0 {
+            options = options.with_max_message_size(sz);
+        }
+    }
+
+    // Set response cache TTL if provided
+    if let Some(ms) = config.response_cache_ttl_ms {
+        if ms > 0 {
+            options = options.with_response_cache_ttl(std::time::Duration::from_millis(ms));
+        }
+    }
+
+    // Set max request retries if provided
+    if let Some(n) = config.max_request_retries {
+        options = options.with_max_request_retries(n);
+    }
+
+    // Set certificates if provided (for testing only)
+    if !config.cert_chain_der.is_empty() {
+        let certs: Vec<rustls_pki_types::CertificateDer<'static>> = config
+            .cert_chain_der
+            .into_iter()
+            .map(rustls_pki_types::CertificateDer::from)
+            .collect();
+        options = options.with_certificates(certs);
+    }
+
+    // Set private key if provided (for testing only)
+    if let Some(private_key_der) = config.private_key_der {
+        let pk = rustls_pki_types::PrivatePkcs8KeyDer::from(private_key_der);
+        options = options.with_private_key(pk.into());
+    }
+
+    // Set root certificates if provided (for testing only)
+    if !config.root_certs_der.is_empty() {
+        let certs: Vec<rustls_pki_types::CertificateDer<'static>> = config
+            .root_certs_der
+            .into_iter()
+            .map(rustls_pki_types::CertificateDer::from)
+            .collect();
+        options = options.with_root_certificates(certs);
     }
     // Wire key manager and local pk/logger
     let manager = match validate_node_manager(keys_inner) {
@@ -3484,77 +4042,37 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     };
 
-    // Get node ID first
-    #[allow(unused_variables)]
-    let node_id = {
-        let mgr = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-        mgr.get_node_id()
-    };
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
-    let _ = rx; // Suppress unused variable warning - used in future implementation
+    // Create per-type channels (capacity 1024 each) - transport-specific only
+    let (peer_connected_tx, peer_connected_rx) = mpsc::channel::<PeerConnectedEvent>(1024);
+    let (peer_disconnected_tx, peer_disconnected_rx) = mpsc::channel::<String>(1024);
+    let (request_tx, request_rx) = mpsc::channel::<TransportRequestEvent>(1024);
+    let (event_tx, event_rx) = mpsc::channel::<TransportEventEvent>(1024);
+    let (response_tx, response_rx) = mpsc::channel::<TransportResponseEvent>(1024);
 
     // Build callbacks to emit events
-    let pc_tx = tx.clone();
-    #[allow(unused_variables)]
+    let pc_tx = peer_connected_tx.clone();
     let pc_cb: runar_transporter::transport::PeerConnectedCallback =
         Arc::new(move |peer_id, node_info| {
             let pc_tx = pc_tx.clone();
             Box::pin(async move {
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(
-                    serde_cbor::Value::Text("type".into()),
-                    serde_cbor::Value::Text("PeerConnected".into()),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("v".into()),
-                    serde_cbor::Value::Integer(1),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("peer_node_id".into()),
-                    serde_cbor::Value::Text(peer_id),
-                );
-                let ni = serde_cbor::to_vec(&node_info).unwrap_or_default();
-                map.insert(
-                    serde_cbor::Value::Text("node_info".into()),
-                    serde_cbor::Value::Bytes(ni),
-                );
                 let _ = pc_tx
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                    .send(PeerConnectedEvent {
+                        node_id: peer_id,
+                        node_info,
+                    })
                     .await;
             })
         });
 
-    let pd_tx = tx.clone();
-    #[allow(unused_variables)]
+    let pd_tx = peer_disconnected_tx.clone();
     let pd_cb: runar_transporter::transport::PeerDisconnectedCallback = Arc::new(move |peer_id| {
         let pd_tx = pd_tx.clone();
         Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("PeerDisconnected".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("peer_node_id".into()),
-                serde_cbor::Value::Text(peer_id),
-            );
-            let _ = pd_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                .await;
+            let _ = pd_tx.send(peer_id).await;
         })
     });
 
-    let req_tx = tx.clone();
+    let req_tx = request_tx.clone();
     let pending: Arc<
         Mutex<
             std::collections::HashMap<
@@ -3564,7 +4082,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         >,
     > = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let pending_cb = pending.clone();
-    #[allow(unused_variables)]
     let rq_cb: runar_transporter::transport::RequestCallback = Arc::new(move |req| {
         let req_tx = req_tx.clone();
         let pending_cb = pending_cb.clone();
@@ -3572,44 +4089,21 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             let request_id = uuid::Uuid::new_v4().to_string();
             let (tx_resp, rx_resp) = oneshot::channel();
             pending_cb.lock().await.insert(request_id.clone(), tx_resp);
-
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("RequestReceived".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("request_id".into()),
-                serde_cbor::Value::Text(request_id),
-            );
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(req.payload.path.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(
-                    req.payload
+            let _ = req_tx
+                .send(TransportRequestEvent {
+                    request_id,
+                    source_peer_id: req.source_node_id.clone(),
+                    destination_peer_id: req.destination_node_id.clone(),
+                    path: req.payload.path.clone(),
+                    correlation_id: req.payload.correlation_id.clone(),
+                    payload: req.payload.payload_bytes.clone(),
+                    profile_public_key: req
+                        .payload
                         .profile_public_keys
                         .first()
                         .cloned()
                         .unwrap_or_default(),
-                ),
-            );
-            let _ = req_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                })
                 .await;
 
             match rx_resp.await {
@@ -3630,112 +4124,180 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    let ev_tx = tx.clone();
-    #[allow(unused_variables)]
+    let ev_tx = event_tx.clone();
     let ev_cb: runar_transporter::transport::EventCallback = Arc::new(move |ev| {
         let ev_tx = ev_tx.clone();
         Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("EventReceived".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(ev.payload.path.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
-            );
             let _ = ev_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                .send(TransportEventEvent {
+                    source_peer_id: ev.source_node_id.clone(),
+                    destination_peer_id: ev.destination_node_id.clone(),
+                    path: ev.payload.path.clone(),
+                    correlation_id: ev.payload.correlation_id.clone(),
+                    payload: ev.payload.payload_bytes.clone(),
+                })
                 .await;
             Ok(())
         })
     });
 
-    // Require local NodeInfo to be set before initializing transport
-    if keys_inner.local_node_info.load().as_ref().is_none() {
-        set_error(
-            err,
-            1,
-            "local NodeInfo is required; call rn_keys_set_local_node_info() before creating the transport",
-        );
-        return 1;
-    }
-    // Note: This is a temporary workaround for the transport API mismatch
-    // The transport expects Arc<NodeKeyManager> but we have Arc<RwLock<NodeKeyManager>>
-    // This should be addressed in a future architectural update
-    #[allow(unused_variables)]
-    let node_manager_for_transport = {
-        let _mgr = match manager.read() {
+    // Get node public key for transport
+    let node_public_key = {
+        let mgr = match manager.read() {
             Ok(mgr) => mgr,
             Err(_) => {
                 set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
                 return RN_ERROR_LOCK_ERROR;
             }
         };
-        // We can't easily extract the inner manager without ownership issues
-        // For now, we'll create a dummy manager - this needs proper architectural resolution
-        // This todo!() is a placeholder for future implementation when the transport API is updated
-        // to work with the new key manager structure. The code after this prepares the necessary
-        // variables for that future implementation.
-        todo!("Transport integration needs architectural update for new key manager structure")
+        mgr.get_node_public_key()
     };
 
-    // This code block is unreachable due to the todo!() above, but it prepares variables
-    // for future implementation when the transport integration is completed.
-    #[allow(unreachable_code)]
+    let Some(node_public_key) = node_public_key else {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            "node public key not available",
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    };
+
+    // Wire callbacks and key manager
     {
+        let node_manager_for_transport = Arc::clone(manager);
+        let logger = Arc::clone(&keys_inner.logger);
         options = options
             .with_key_manager(node_manager_for_transport)
-            .with_local_node_public_key(node_manager_for_transport.get_node_public_key())
-            .with_logger_from_node_id(node_id)
+            .with_local_node_public_key(node_public_key)
+            .with_logger(logger)
             .with_peer_connected_callback(pc_cb)
             .with_peer_disconnected_callback(pd_cb)
             .with_request_callback(rq_cb)
             .with_event_callback(ev_cb);
     }
 
-    // Provide NodeInfo getter from the local holder (no FFI callbacks)
-    let holder = keys_inner.local_node_info.clone();
-    let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
-        Arc::new(move || {
+    // Create a shared local_node_info holder for both callback and transport
+    let shared_local_node_info = Arc::new(RwLock::new(initial_node_info));
+    let holder = shared_local_node_info.clone();
+    let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback = Arc::new(
+        move || {
             let holder = holder.clone();
+            let root_logger = get_global_logger();
+            let logger = root_logger.with_component(Component::Custom("get_local_node_info_cb"));
             Box::pin(async move {
-                let cur = holder.load();
-                match cur.as_ref() {
-                    Some(info) => Ok(info.clone()),
-                    None => Err(anyhow::anyhow!("local NodeInfo not set")),
-                }
+                log_trace!(
+                    logger,
+                    "FFI: get_local_node_info_cb called during handshake"
+                );
+                let cur = match holder.read() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        log_trace!(
+                            logger,
+                            "FFI: get_local_node_info_cb - failed to acquire read lock: {e}"
+                        );
+                        return Err(anyhow::anyhow!("Failed to acquire read lock: {e}"));
+                    }
+                };
+                let info = &*cur;
+                log_trace!(
+                    logger,
+                    "FFI: get_local_node_info_cb returning NodeInfo with {} services, {} subscriptions",
+                    info.node_metadata.services.len(),
+                    info.node_metadata.subscriptions.len()
+                );
+                Ok(info.clone())
             })
-        });
+        },
+    );
     options = options.with_get_local_node_info(get_local_node_info_cb);
+
+    // Configure mTLS - get certificate configuration from key manager
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire lock for certificate config",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get certificate configuration for mTLS
+    let cert_config = match node_manager.get_quic_certificate_config() {
+        Ok(config) => config,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to get certificate config: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Get node public key for local identity
+    let node_public_key = match node_manager.get_node_public_key() {
+        Some(pk) => pk,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Node public key not available",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Extract CA certificate from certificate chain (last certificate in chain)
+    let ca_cert = match cert_config.certificate_chain.last() {
+        Some(cert) => cert,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "CA certificate not found in certificate chain",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Configure mTLS options
+    options = options
+        .with_key_manager(Arc::clone(manager))
+        .with_root_certificates(vec![ca_cert.clone()])
+        .with_local_node_public_key(node_public_key);
+
+    // (legacy callback wiring removed; callbacks are configured earlier using typed channels)
+
     // Construct transport
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),
         Err(e) => {
-            set_error(err, 2, &format!("Failed to create transport: {e}"));
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create transport: {e}"),
+            );
             return 2;
         }
     };
     let inner = TransportInner {
-        logger: keys_inner.logger.clone(),
         transport,
-        events_tx: tx,
-        events_rx: Mutex::new(rx),
+        peer_connected_tx,
+        peer_connected_rx: Mutex::new(peer_connected_rx),
+        peer_disconnected_tx,
+        peer_disconnected_rx: Mutex::new(peer_disconnected_rx),
+        request_tx,
+        request_rx: Mutex::new(request_rx),
+        event_tx,
+        event_rx: Mutex::new(event_rx),
+        response_tx,
+        response_rx: Mutex::new(response_rx),
         pending,
-        request_id_seq: Arc::new(AtomicU64::new(1)),
-        local_node_info: keys_inner.local_node_info.clone(),
+        local_node_info: shared_local_node_info,
     };
     let handle = FfiTransportHandle {
         inner: Box::into_raw(Box::new(inner)),
@@ -3765,61 +4327,255 @@ fn runtime() -> &'static Runtime {
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_start(transport: *mut c_void, err: *mut RnError) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let t = (&*handle.inner).transport.clone();
     let res = runtime().block_on(async move { Arc::clone(&t).start().await });
     if let Err(e) = res {
-        set_error(err, 2, &format!("Failed to start transport: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("Failed to start transport: {e}"),
+        );
         return 2;
     }
     0
 }
 
+// Legacy rn_transport_poll_event removed: use per-type poll APIs
+
 #[no_mangle]
-pub unsafe extern "C" fn rn_transport_poll_event(
+pub unsafe extern "C" fn rn_transport_poll_peer_connected(
     transport: *mut c_void,
-    out_event: *mut *mut u8,
+    out_cbor: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null() {
-        set_error(err, 1, "transport is null");
-        return 1;
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
     }
-    if out_event.is_null() || out_len.is_null() {
-        set_error(err, 1, "null out");
-        return 1;
-    }
-    let handle = &mut *(transport as *mut FfiTransportHandle);
-    if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
-    }
-    let inner = &*handle.inner;
-    let mut rx = runtime().block_on(inner.events_rx.lock());
+    let mut rx = runtime().block_on(inner.peer_connected_rx.lock());
     match rx.try_recv() {
-        Ok(buf) => {
-            if !alloc_bytes(out_event, out_len, &buf) {
-                set_error(err, 3, "alloc failed");
-                return 3;
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
             }
-            0
-        }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
         Err(mpsc::error::TryRecvError::Empty) => {
-            *out_event = std::ptr::null_mut();
+            *out_cbor = std::ptr::null_mut();
             *out_len = 0;
             0
         }
         Err(_) => {
-            set_error(err, 2, "event channel closed");
-            2
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_peer_disconnected(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.peer_disconnected_rx.lock());
+    match rx.try_recv() {
+        Ok(node_id) => match serde_cbor::to_vec(&node_id) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_request(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.request_rx.lock());
+    match rx.try_recv() {
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_event(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.event_rx.lock());
+    match rx.try_recv() {
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_response(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.response_rx.lock());
+    match rx.try_recv() {
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
         }
     }
 }
@@ -3832,26 +4588,34 @@ pub unsafe extern "C" fn rn_transport_connect_peer(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || peer_info_cbor.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let slice = std::slice::from_raw_parts(peer_info_cbor, len);
     let peer: PeerInfo = match serde_cbor::from_slice(slice) {
         Ok(p) => p,
         Err(e) => {
-            set_error(err, 2, &format!("decode PeerInfo: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode PeerInfo: {e}"),
+            );
             return 2;
         }
     };
     let t = (&*handle.inner).transport.clone();
     let res = runtime().block_on(async move { Arc::clone(&t).connect_peer(peer).await });
     if let Err(e) = res {
-        set_error(err, 2, &format!("connect_peer failed: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("connect_peer failed: {e}"),
+        );
         return 2;
     }
     0
@@ -3864,29 +4628,32 @@ pub unsafe extern "C" fn rn_transport_disconnect_peer(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || peer_node_id.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let id = match std::ffi::CStr::from_ptr(peer_node_id).to_str() {
         Ok(s) => s.to_string(),
         Err(_) => {
-            set_error(err, 2, "invalid utf8");
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8");
             return 2;
         }
     };
     let res = runtime().block_on((&*handle.inner).transport.disconnect(&id));
     if let Err(e) = res {
-        set_error(err, 2, &format!("disconnect failed: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("disconnect failed: {e}"),
+        );
         return 2;
     }
     0
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_is_connected(
     transport: *mut c_void,
@@ -3895,18 +4662,18 @@ pub unsafe extern "C" fn rn_transport_is_connected(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || peer_node_id.is_null() || out_connected.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let id = match std::ffi::CStr::from_ptr(peer_node_id).to_str() {
         Ok(s) => s.to_string(),
         Err(_) => {
-            set_error(err, 2, "invalid utf8");
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8");
             return 2;
         }
     };
@@ -3923,31 +4690,68 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || node_info_cbor.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let slice = std::slice::from_raw_parts(node_info_cbor, len);
     let node_info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, 2, &format!("decode NodeInfo: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode NodeInfo: {e}"),
+            );
             return 2;
         }
     };
     // First update the shared holder so subsequent reads see the latest
     let inner_ref = unsafe { &*handle.inner };
-    inner_ref
-        .local_node_info
-        .store(Arc::new(Some(node_info.clone())));
+    let root_logger = get_global_logger();
+    let logger =
+        root_logger.with_component(Component::Custom("rn_transport_update_local_node_info"));
+
+    log_trace!(
+        logger,
+        "FFI: Updating shared local_node_info holder with {} services, {} subscriptions",
+        node_info.node_metadata.services.len(),
+        node_info.node_metadata.subscriptions.len()
+    );
+    match inner_ref.local_node_info.write() {
+        Ok(mut guard) => {
+            *guard = node_info.clone();
+        }
+        Err(e) => {
+            log_trace!(
+                logger,
+                "FFI: Failed to acquire write lock for NodeInfo update: {e}"
+            );
+            // Continue execution - this is not critical enough to fail the entire operation
+            return 0; // Success, but NodeInfo update was skipped
+        }
+    }
+    log_trace!(
+        logger,
+        "FFI: Shared local_node_info holder updated successfully"
+    );
+
     // Then notify transport runtime (now emits latest info)
+    log_trace!(
+        logger,
+        "FFI: Calling transport.update_peers() to notify peers"
+    );
     let res = runtime().block_on((&*handle.inner).transport.update_peers(node_info));
     if let Err(e) = res {
-        set_error(err, 2, &format!("update_peers failed: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("update_peers failed: {e}"),
+        );
         return 2;
     }
     0
@@ -3961,13 +4765,13 @@ pub unsafe extern "C" fn rn_transport_request(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || request_cbor.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
 
     // Deserialize CBOR request parameters
@@ -3975,12 +4779,12 @@ pub unsafe extern "C" fn rn_transport_request(
         match serde_cbor::from_slice(std::slice::from_raw_parts(request_cbor, request_len)) {
             Ok(r) => r,
             Err(_) => {
-                set_error(err, 2, "invalid request CBOR");
+                set_error(err, RN_ERROR_SERIALIZATION_FAILED, "invalid request CBOR");
                 return 2;
             }
         };
     let t = (&*handle.inner).transport.clone();
-    let events = (&*handle.inner).events_tx.clone();
+    let resp_tx = (&*handle.inner).response_tx.clone();
     runtime().spawn(async move {
         match t
             .request(
@@ -3994,25 +4798,11 @@ pub unsafe extern "C" fn rn_transport_request(
             .await
         {
             Ok(resp) => {
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(
-                    serde_cbor::Value::Text("type".into()),
-                    serde_cbor::Value::Text("ResponseReceived".into()),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("v".into()),
-                    serde_cbor::Value::Integer(1),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("correlation_id".into()),
-                    serde_cbor::Value::Text(request.correlation_id),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("payload".into()),
-                    serde_cbor::Value::Bytes(resp),
-                );
-                let _ = events
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                let _ = resp_tx
+                    .send(TransportResponseEvent {
+                        correlation_id: request.correlation_id,
+                        payload: resp,
+                    })
                     .await;
             }
             Err(_e) => {}
@@ -4029,13 +4819,13 @@ pub unsafe extern "C" fn rn_transport_publish(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || publish_cbor.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
 
     // Deserialize CBOR publish parameters
@@ -4043,7 +4833,7 @@ pub unsafe extern "C" fn rn_transport_publish(
         match serde_cbor::from_slice(std::slice::from_raw_parts(publish_cbor, publish_len)) {
             Ok(p) => p,
             Err(_) => {
-                set_error(err, 2, "invalid publish CBOR");
+                set_error(err, RN_ERROR_SERIALIZATION_FAILED, "invalid publish CBOR");
                 return 2;
             }
         };
@@ -4070,13 +4860,13 @@ pub unsafe extern "C" fn rn_transport_complete_request(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || complete_cbor.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
 
     // Deserialize CBOR complete request parameters
@@ -4084,7 +4874,11 @@ pub unsafe extern "C" fn rn_transport_complete_request(
         match serde_cbor::from_slice(std::slice::from_raw_parts(complete_cbor, complete_len)) {
             Ok(c) => c,
             Err(_) => {
-                set_error(err, 2, "invalid complete request CBOR");
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    "invalid complete request CBOR",
+                );
                 return 2;
             }
         };
@@ -4104,24 +4898,28 @@ pub unsafe extern "C" fn rn_transport_complete_request(
         });
         0
     } else {
-        set_error(err, 2, "unknown request_id");
+        set_error(err, RN_ERROR_OPERATION_FAILED, "unknown request_id");
         2
     }
 }
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_stop(transport: *mut c_void, err: *mut RnError) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let res = runtime().block_on((&*handle.inner).transport.stop());
     if let Err(e) = res {
-        set_error(err, 2, &format!("Failed to stop transport: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("Failed to stop transport: {e}"),
+        );
         return 2;
     }
     0
@@ -4135,21 +4933,21 @@ pub unsafe extern "C" fn rn_transport_local_addr(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
+        return RN_ERROR_INVALID_HANDLE;
     }
     if out_str.is_null() || out_len.is_null() {
-        set_error(err, 1, "null out");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
     }
     let addr = (&*handle.inner).transport.get_local_address();
     if !alloc_string(out_str, out_len, &addr) {
-        set_error(err, 3, "alloc failed");
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
         return 3;
     }
     0
@@ -4226,4 +5024,4135 @@ pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
         return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
+}
+
+// ============================================================================
+// NEW DUAL-ROLE NODEKEYMANAGER FFI FUNCTIONS
+// ============================================================================
+
+/// Check if NodeKeyManager has keys (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_has_keys(
+    keys: *mut c_void,
+    out_has_keys: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_has_keys.is_null() || err.is_null() {
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.probe_and_load_state() {
+        Ok(ready) => {
+            unsafe {
+                *out_has_keys = if ready { 1 } else { 0 };
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to check key state: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Generate keys for NodeKeyManager (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut RnError) -> i32 {
+    if keys.is_null() || err.is_null() {
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.generate_keys() {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate keys: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+// ============================================================================
+// CA NODE FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Create new shared CA Node (consistent API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_new_shared(
+    out_shared_ca_node: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if out_shared_ca_node.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("CA Node"));
+
+    // Create a proper CA Node with valid certificates
+    // This follows the design pattern from the tests
+    let temp_key = match EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create temporary key: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create temporary certificates using CertificateAuthority
+    // These will be replaced by setup_complete with the real certificates
+    let temp_ca_authority =
+        match runar_keys::certificate::CertificateAuthority::new("CN=Temp CA,O=Temp,C=US") {
+            Ok(ca) => ca,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to create temporary CA: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        };
+
+    let temp_cert = temp_ca_authority.ca_certificate().clone();
+    let temp_root_cert = temp_ca_authority.ca_certificate().clone();
+
+    let ca_node = CANode::new(
+        temp_key,
+        temp_cert,
+        temp_root_cert,
+        "uninitialized".to_string(), // Will be updated by setup_complete
+        Arc::new(logger),
+    );
+
+    // Create shared handle directly
+    let ca_node_arc = Arc::new(RwLock::new(ca_node));
+    unsafe {
+        *out_shared_ca_node = Box::into_raw(Box::new(ca_node_arc)) as *mut c_void;
+    }
+
+    0
+}
+
+/// Free shared CA Node reference
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_free_shared(shared_ca_node: *mut c_void) {
+    if !shared_ca_node.is_null() {
+        let _ = Box::from_raw(shared_ca_node as *mut Arc<RwLock<CANode>>);
+    }
+}
+
+/// Add admin SKI to shared CA Node reference
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
+    shared_ca_node: *mut c_void,
+    ski: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null() || ski.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ski_str = match std::ffi::CStr::from_ptr(ski).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid SKI string: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // This function now expects a shared CA Node (Arc<RwLock<CANode>>)
+    // The caller should pass the shared_ca_node from rn_keys_ca_node_new_shared
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    ca_node_guard.add_admin_ski(ski_str.to_string());
+
+    0
+}
+
+/// Configure enrollment authority (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
+    shared_ca_node: *mut c_void,
+    ea_public_keys: *const u8,
+    keys_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse enrollment authority public keys
+    let ea_keys_data = std::slice::from_raw_parts(ea_public_keys, keys_len);
+    let ea_public_keys_vec = match serde_cbor::from_slice::<Vec<Vec<u8>>>(ea_keys_data) {
+        Ok(keys) => keys,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse EA public keys: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Configure enrollment authorities
+    match ca_node_guard.configure_enrollment_authority(ea_public_keys_vec) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to configure enrollment authority: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Complete CA Node setup with internal private key management (SECURE)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_setup_complete(
+    shared_ca_node: *mut c_void,
+    root_ca_subject: *const c_char,
+    issuing_ca_subject: *const c_char,
+    validity_days: u32,
+    issuing_ca_serial: u64,
+    ea_public_keys: *const u8,
+    ea_keys_len: usize,
+    network_id: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse subjects
+    let root_subject = match std::ffi::CStr::from_ptr(root_ca_subject).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse root CA subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let issuing_subject = match std::ffi::CStr::from_ptr(issuing_ca_subject).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse issuing CA subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse enrollment authority public keys
+    let ea_keys_data = std::slice::from_raw_parts(ea_public_keys, ea_keys_len);
+    let ea_public_keys_vec = match serde_cbor::from_slice::<Vec<Vec<u8>>>(ea_keys_data) {
+        Ok(keys) => keys,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to parse EA public keys: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Create Root CA internally (private key never leaves Rust)
+    let root_ca = match CertificateAuthority::new(&root_subject) {
+        Ok(ca) => ca,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create Root CA: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create Issuing CA key internally (private key never leaves Rust)
+    let issuing_key = match EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create Issuing CA key: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create and sign Issuing CA certificate internally
+    let issuing_csr = match CertificateRequest::create(&issuing_key, &issuing_subject) {
+        Ok(csr) => csr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create Issuing CA CSR: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    let issuing_cert = match root_ca.sign_ca_certificate_request_with_serial(
+        &issuing_csr,
+        validity_days,
+        Some(issuing_ca_serial),
+    ) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to sign Issuing CA certificate: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Install everything in CA Node (no private keys exposed)
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    ca_node_guard.network_id = network_id_str.clone();
+
+    match ca_node_guard.install_issuing_ca(
+        issuing_key,
+        issuing_cert,
+        root_ca.ca_certificate().clone(),
+        ea_public_keys_vec,
+    ) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to install Issuing CA: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+/// Create EA key pair (private key stays internal)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_create_ea_key_pair(
+    ea_key_handle: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key_handle.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Create EA key pair internally (private key never leaves Rust)
+    let ea_key = match EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create EA key pair: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Store the key pair in a Box and return handle
+    let boxed_key = Box::new(ea_key);
+    *ea_key_handle = Box::into_raw(boxed_key) as *mut c_void;
+    0
+}
+
+/// Get EA public key (only public key exposed) in CBOR format
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_get_ea_public_key(
+    ea_key_handle: *mut c_void,
+    public_key: *mut *mut u8,
+    public_key_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key_handle.is_null() || public_key.is_null() || public_key_len.is_null() || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ea_key = &*(ea_key_handle as *const EcdsaKeyPair);
+    let pub_key_bytes = ea_key.public_key().as_bytes().to_vec();
+
+    // Create EA keys array in CBOR format (array of public key bytes)
+    let ea_keys = vec![pub_key_bytes];
+    let cbor_data = match serde_cbor::to_vec(&ea_keys) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to serialize EA keys: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Allocate memory for the CBOR-encoded EA keys
+    if !alloc_bytes(public_key, public_key_len, &cbor_data) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for EA public keys",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Generate enrollment token (uses internal private key)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_generate_enrollment_token(
+    ea_key_handle: *mut c_void,
+    token_id: *const c_char,
+    network_id: *const c_char,
+    subject: *const c_char,
+    valid_from: u64,
+    valid_until: u64,
+    nonce: *const u8,
+    nonce_len: usize,
+    capabilities: *const *const c_char,
+    capabilities_len: usize,
+    token_cbor: *mut *mut u8,
+    token_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key_handle.is_null() || token_cbor.is_null() || token_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse string parameters
+    let token_id_str = match std::ffi::CStr::from_ptr(token_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse token ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let subject_str = match std::ffi::CStr::from_ptr(subject).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse nonce
+    let nonce_data = std::slice::from_raw_parts(nonce, nonce_len);
+    let nonce_array: [u8; 16] = match nonce_data.try_into() {
+        Ok(arr) => arr,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Invalid nonce length, expected 16 bytes",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Parse capabilities
+    let mut capabilities_vec = Vec::with_capacity(capabilities_len);
+    for i in 0..capabilities_len {
+        let cap_ptr = *capabilities.add(i);
+        let cap_str = match std::ffi::CStr::from_ptr(cap_ptr).to_str() {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_INVALID_UTF8,
+                    &format!("Failed to parse capability {i}: {e}"),
+                );
+                return RN_ERROR_INVALID_UTF8;
+            }
+        };
+        capabilities_vec.push(cap_str);
+    }
+
+    // Create token body
+    let token_body = EnrollmentTokenBody::new(
+        token_id_str,
+        network_id_str,
+        Some(subject_str),
+        valid_from,
+        valid_until,
+        nonce_array,
+        capabilities_vec,
+    );
+
+    // Generate token using internal private key
+    let ea_key = &*(ea_key_handle as *const EcdsaKeyPair);
+    let token = match EnrollmentToken::generate(ea_key, token_body) {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate enrollment token: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Serialize token to CBOR
+    let token_cbor_data = match serde_cbor::to_vec(&token) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to serialize token: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Allocate memory for the token
+    if !alloc_bytes(token_cbor, token_len, &token_cbor_data) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for token",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Free EA key pair
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_free_ea_key_pair(ea_key_handle: *mut c_void) {
+    if !ea_key_handle.is_null() {
+        let _ = Box::from_raw(ea_key_handle as *mut EcdsaKeyPair);
+    }
+}
+
+/// Get Root CA certificate from CA Node (public certificate only)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_get_root_ca_certificate(
+    shared_ca_node: *mut c_void,
+    certificate: *mut *mut u8,
+    certificate_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || certificate.is_null()
+        || certificate_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get the root CA certificate (public only)
+    let root_ca_cert = &ca_node_guard.root_ca_cert;
+
+    let cert_der = root_ca_cert.der_bytes().to_vec();
+
+    if !alloc_bytes(certificate, certificate_len, &cert_der) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for certificate",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Get Issuing CA certificate from CA Node (public certificate only)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_get_issuing_ca_certificate(
+    shared_ca_node: *mut c_void,
+    certificate: *mut *mut u8,
+    certificate_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || certificate.is_null()
+        || certificate_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get the issuing CA certificate (public only)
+    let issuing_ca_cert = &ca_node_guard.issuing_ca_cert;
+
+    let cert_der = issuing_ca_cert.der_bytes().to_vec();
+
+    if !alloc_bytes(certificate, certificate_len, &cert_der) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for certificate",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Handle enrollment request (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
+    shared_ca_node: *mut c_void,
+    request: *const u8,
+    request_len: usize,
+    remote_addr: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || request.is_null()
+        || remote_addr.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse remote address
+    let remote_addr_str = match std::ffi::CStr::from_ptr(remote_addr).to_str() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid remote address: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse the enrollment request
+    let request_data = std::slice::from_raw_parts(request, request_len);
+    let enroll_request = match serde_cbor::from_slice::<CsrEnrollRequest>(request_data) {
+        Ok(req) => req,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse enrollment request: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Handle the enrollment request
+    match ca_node_guard.handle_enroll(enroll_request, remote_addr_str) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            let root_logger = get_global_logger();
+            let logger =
+                root_logger.with_component(Component::Custom("rn_keys_ca_node_handle_enroll"));
+            log_debug!(logger, "Enrollment error details: {e}");
+            log_debug!(logger, "Enrollment error chain: {e:#}");
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Enrollment failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Handle renewal request (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
+    shared_ca_node: *mut c_void,
+    request: *const u8,
+    request_len: usize,
+    peer_cert: *const u8,
+    cert_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || request.is_null()
+        || peer_cert.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse the renewal request
+    let request_data = std::slice::from_raw_parts(request, request_len);
+    let renew_request = match serde_cbor::from_slice::<RenewRequest>(request_data) {
+        Ok(req) => req,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse renewal request: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Parse peer certificate
+    let peer_cert_data = std::slice::from_raw_parts(peer_cert, cert_len);
+
+    // Handle the renewal request
+    match ca_node_guard.handle_renew(renew_request, peer_cert_data) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Renewal failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Handle revocation request (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
+    shared_ca_node: *mut c_void,
+    request: *const u8,
+    request_len: usize,
+    admin_ski: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || request.is_null()
+        || admin_ski.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse admin SKI
+    let admin_ski_str = match std::ffi::CStr::from_ptr(admin_ski).to_str() {
+        Ok(ski) => ski,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid admin SKI: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse the revocation request
+    let request_data = std::slice::from_raw_parts(request, request_len);
+    let revoke_request = match serde_cbor::from_slice::<RevokeRequest>(request_data) {
+        Ok(req) => req,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse revocation request: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Handle the revocation request
+    match ca_node_guard.handle_revoke(revoke_request, admin_ski_str) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Revocation failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Handle chain request (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
+    shared_ca_node: *mut c_void,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || network_id.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse network ID
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(id) => id.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Handle the chain request
+    match ca_node_guard.handle_chain(network_id_str) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Chain request failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Handle status request (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
+    shared_ca_node: *mut c_void,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || network_id.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse network ID
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(id) => id.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Handle the status request
+    match ca_node_guard.handle_status(network_id_str) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Status request failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+/// Handle CRL request (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
+    shared_ca_node: *mut c_void,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null()
+        || network_id.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse network ID
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(id) => id.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Handle the CRL request
+    match ca_node_guard.handle_crl(network_id_str) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("CRL request failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+// ============================================================================
+// CA CREATION FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Create Root CA certificate
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_create_root_ca(
+    subject: *const c_char,
+    out_ca: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if subject.is_null() || out_ca.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let subject_str = match CStr::from_ptr(subject).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid UTF-8 in subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let ca = match runar_keys::certificate::CertificateAuthority::new(subject_str) {
+        Ok(ca) => ca,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create root CA: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    unsafe {
+        *out_ca = Box::into_raw(Box::new(ca)) as *mut c_void;
+    }
+
+    0
+}
+
+/// Create Issuing CA certificate (signed by Root CA)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_create_issuing_ca(
+    root_ca: *mut c_void,
+    subject: *const c_char,
+    validity_days: u32,
+    serial: u64,
+    out_ca: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if root_ca.is_null() || subject.is_null() || out_ca.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let root_ca = &*(root_ca as *const runar_keys::certificate::CertificateAuthority);
+    let subject_str = match CStr::from_ptr(subject).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid UTF-8 in subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Validate validity_days
+    if validity_days == 0 {
+        set_error(
+            err,
+            RN_ERROR_INVALID_ARGUMENT,
+            "validity_days cannot be zero",
+        );
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Validate serial
+    if serial == 0 {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "serial cannot be zero");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Create issuing CA key pair
+    let issuing_ca_key = match runar_keys::certificate::EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create issuing CA key: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create CSR for issuing CA
+    let issuing_ca_csr_der =
+        match runar_keys::certificate::CertificateRequest::create(&issuing_ca_key, subject_str) {
+            Ok(csr_der) => csr_der,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to create issuing CA CSR: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        };
+
+    // Sign the issuing CA certificate
+    let issuing_ca_cert = match root_ca.sign_ca_certificate_request_with_serial(
+        &issuing_ca_csr_der,
+        validity_days,
+        Some(serial),
+    ) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to sign issuing CA certificate: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create issuing CA from existing key pair and certificate
+    let issuing_ca = runar_keys::certificate::CertificateAuthority::from_existing(
+        issuing_ca_key,
+        issuing_ca_cert,
+    );
+
+    unsafe {
+        *out_ca = Box::into_raw(Box::new(issuing_ca)) as *mut c_void;
+    }
+
+    0
+}
+
+/// Get CA certificate DER bytes
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_get_certificate_der(
+    ca: *mut c_void,
+    out_cert: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ca.is_null() || out_cert.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca = &*(ca as *const runar_keys::CertificateAuthority);
+    let cert_der = ca.ca_certificate().der_bytes();
+
+    // Allocate memory for certificate DER using alloc_bytes
+    if !alloc_bytes(out_cert, out_len, cert_der) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Get CA certificate subject
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_get_certificate_subject(
+    ca: *mut c_void,
+    out_subject: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if ca.is_null() || out_subject.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca = &*(ca as *const runar_keys::CertificateAuthority);
+    let subject = ca.ca_certificate().subject();
+
+    let c_subject = match CString::new(subject) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid UTF-8 in subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    unsafe {
+        *out_subject = c_subject.into_raw();
+    }
+
+    0
+}
+
+/// Free CA resources
+/// Free CA resources
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_free(ca: *mut c_void) {
+    if !ca.is_null() {
+        let _ = Box::from_raw(ca as *mut runar_keys::CertificateAuthority);
+    }
+}
+
+// ============================================================================
+// ENROLLMENT TOKEN MANAGEMENT FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Generate enrollment token
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_enrollment_token_generate(
+    ea_key: *const u8,
+    key_len: usize,
+    token_id: *const c_char,
+    network_id: *const c_char,
+    subject: *const c_char,
+    not_before: u64,
+    expires_at: u64,
+    nonce: *const u8,
+    nonce_len: usize,
+    permissions: *const u8,
+    permissions_len: usize,
+    out_token: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key.is_null()
+        || token_id.is_null()
+        || network_id.is_null()
+        || subject.is_null()
+        || nonce.is_null()
+        || permissions.is_null()
+        || out_token.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse string parameters
+    let token_id_str = match std::ffi::CStr::from_ptr(token_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid token_id string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid network_id string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let subject_str = match std::ffi::CStr::from_ptr(subject).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid subject string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse nonce
+    let nonce_data = std::slice::from_raw_parts(nonce, nonce_len);
+    if nonce_data.len() != 16 {
+        set_error(
+            err,
+            RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+            "Nonce must be exactly 16 bytes",
+        );
+        return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+    }
+    let mut nonce_array = [0u8; 16];
+    nonce_array.copy_from_slice(nonce_data);
+
+    // Parse permissions
+    let permissions_data = std::slice::from_raw_parts(permissions, permissions_len);
+    let permissions_vec: Vec<String> = match serde_cbor::from_slice(permissions_data) {
+        Ok(p) => p,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to parse permissions: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Parse EA key using runar-keys function
+    let ea_key_data = std::slice::from_raw_parts(ea_key, key_len);
+    let ea_key_pair = match runar_keys::certificate::EcdsaKeyPair::from_pkcs8_der(ea_key_data) {
+        Ok(key_pair) => key_pair,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to parse EA key: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Create token body
+    let token_body = runar_keys::EnrollmentTokenBody {
+        token_id: token_id_str.to_string(),
+        network_id: network_id_str.to_string(),
+        subject_hint: Some(subject_str.to_string()),
+        not_before,
+        expires_at,
+        nonce: nonce_array,
+        permissions: permissions_vec,
+    };
+
+    // Generate token
+    let token = match runar_keys::EnrollmentToken::generate(&ea_key_pair, token_body) {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to generate enrollment token: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Serialize token to CBOR
+    let token_cbor = match serde_cbor::to_vec(&token) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to serialize token: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Allocate memory for token using alloc_bytes
+    if !alloc_bytes(out_token, out_len, &token_cbor) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Validate enrollment token
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_enrollment_token_validate(
+    token: *const u8,
+    token_len: usize,
+    ea_public_key: *const u8,
+    key_len: usize,
+    out_valid: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if token.is_null() || ea_public_key.is_null() || out_valid.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse token
+    let token_data = std::slice::from_raw_parts(token, token_len);
+    let enrollment_token = match serde_cbor::from_slice::<runar_keys::EnrollmentToken>(token_data) {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_INVALID,
+                &format!("Failed to parse token: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_INVALID;
+        }
+    };
+
+    // Parse EA public key
+    let ea_public_key_data = std::slice::from_raw_parts(ea_public_key, key_len);
+
+    // Validate token
+    match enrollment_token.verify(ea_public_key_data) {
+        Ok(_) => {
+            *out_valid = 1; // Valid
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_INVALID,
+                &format!("Token validation failed: {e}"),
+            );
+            *out_valid = 0; // Invalid
+            RN_ERROR_ENROLLMENT_TOKEN_INVALID
+        }
+    }
+}
+
+// ============================================================================
+// CERTIFICATE MANAGEMENT FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Get QUIC certificate configuration
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_quic_certificate_config(
+    keys: *mut c_void,
+    out_config: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_config.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get QUIC certificate config
+    let quic_config = match node_manager.get_quic_certificate_config() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to get QUIC certificate config: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create a serializable representation of the QUIC config
+    let serializable_config = QuicConfigSerializable {
+        certificate_chain: quic_config
+            .certificate_chain
+            .iter()
+            .map(|cert| cert.as_ref().to_vec())
+            .collect(),
+        private_key_der: match &quic_config.private_key {
+            rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => pkcs8.secret_pkcs8_der().to_vec(),
+            _ => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    "Unsupported private key format",
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        },
+    };
+
+    // Serialize to CBOR
+    let config_cbor = match serde_cbor::to_vec(&serializable_config) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to serialize QUIC config: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Allocate memory for config using alloc_bytes
+    if !alloc_bytes(out_config, out_len, &config_cbor) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Get node certificate
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
+    keys: *mut c_void,
+    out_cert: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_node_get_node_certificate"));
+
+    log_trace!(logger, "rn_keys_node_get_node_certificate: function entry");
+
+    if keys.is_null() || out_cert.is_null() || out_len.is_null() || err.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_node_certificate: null argument detected"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_node_get_node_certificate: keys handle is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: keys handle validated, inner: {:p}",
+        inner
+    );
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_get_node_certificate: node manager validated successfully"
+            );
+            mgr
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_node_certificate: failed to validate node manager: {}",
+                e.message()
+            );
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: acquiring read lock on node manager"
+    );
+    let node_manager = match manager.read() {
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_get_node_certificate: read lock acquired successfully"
+            );
+            mgr
+        }
+        Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_node_certificate: failed to acquire read lock"
+            );
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get node certificate
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: calling node_manager.get_node_certificate()"
+    );
+    let cert_der = match node_manager.get_node_certificate() {
+        Some(cert) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_get_node_certificate: certificate found, getting DER bytes"
+            );
+            cert.der_bytes()
+        }
+        None => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_node_certificate: no node certificate installed"
+            );
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "No node certificate installed",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Allocate memory for certificate using Box::into_raw
+    let cert_len = cert_der.len();
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: certificate DER length: {} bytes",
+        cert_len
+    );
+    if !alloc_bytes(out_cert, out_len, cert_der) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: returning success with {} bytes",
+        cert_len
+    );
+
+    0
+}
+/// Extract certificate SKI
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
+    cert: *const u8,
+    cert_len: usize,
+    out_ski: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_certificate_extract_ski"));
+
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: function entry, cert_len: {}",
+        cert_len
+    );
+
+    if cert.is_null() || out_ski.is_null() || err.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_certificate_extract_ski: null argument detected"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Initialize out parameter to null to ensure well-defined state on failure paths
+    unsafe {
+        *out_ski = ptr::null_mut();
+    }
+
+    // Parse certificate
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: parsing certificate DER data"
+    );
+    let cert_data = std::slice::from_raw_parts(cert, cert_len);
+    let certificate = match runar_keys::certificate::X509Certificate::from_der(cert_data.to_vec()) {
+        Ok(cert) => {
+            log_trace!(
+                logger,
+                "rn_keys_certificate_extract_ski: certificate parsed successfully"
+            );
+            cert
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_certificate_extract_ski: failed to parse certificate: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED;
+        }
+    };
+
+    // Extract SKI using runar-keys function
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: extracting SKI from certificate"
+    );
+    let ski_bytes = match runar_keys::certificate::CertificateValidator::extract_ski(&certificate) {
+        Ok(ski) => {
+            log_trace!(
+                logger,
+                "rn_keys_certificate_extract_ski: SKI extracted successfully, length: {}",
+                ski.len()
+            );
+            ski
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_certificate_extract_ski: failed to extract SKI: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED,
+                &format!("Failed to extract SKI: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED;
+        }
+    };
+
+    // Convert to hex string
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: converting SKI bytes to hex string"
+    );
+    let ski_hex = ski_bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("");
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: SKI hex string: {}",
+        ski_hex
+    );
+
+    let ski_cstr = match std::ffi::CString::new(ski_hex) {
+        Ok(s) => {
+            log_trace!(
+                logger,
+                "rn_keys_certificate_extract_ski: CString created successfully"
+            );
+            s
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_certificate_extract_ski: failed to create CString: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid SKI hex string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Allocate memory for SKI string using CString::into_raw
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: allocating memory for SKI string"
+    );
+    *out_ski = ski_cstr.into_raw();
+    log_trace!(logger, "rn_keys_certificate_extract_ski: returning success");
+
+    0
+}
+
+/// Get certificate serial
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_certificate_get_serial(
+    cert: *const u8,
+    cert_len: usize,
+    out_serial: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if cert.is_null() || out_serial.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse certificate
+    let cert_data = std::slice::from_raw_parts(cert, cert_len);
+    let certificate = match runar_keys::certificate::X509Certificate::from_der(cert_data.to_vec()) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED;
+        }
+    };
+
+    // Get serial number using parsed certificate
+    let parsed_cert = match certificate.parsed() {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED;
+        }
+    };
+    let serial_bytes = parsed_cert.serial.to_bytes_be();
+    let serial_hex = serial_bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("");
+    let serial_cstr = match std::ffi::CString::new(serial_hex) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid serial hex string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Allocate memory for serial string using CString::into_raw
+    *out_serial = serial_cstr.into_raw();
+
+    0
+}
+
+// ============================================================================
+// CA SERVER FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Create new CA Server (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_new(
+    config: *const u8,
+    _config_len: usize,
+    shared_ca_node: *mut c_void,
+    out_server: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if config.is_null() || shared_ca_node.is_null() || out_server.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Transporter);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+
+    // Parse the server configuration from the provided config data
+    let config_data = std::slice::from_raw_parts(config, _config_len);
+    let custom_config = match serde_cbor::from_slice::<CustomCaServerConfig>(config_data) {
+        Ok(config) => config,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse server config: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Convert custom config to CaServerConfig
+    let bootstrap_bind = match custom_config.bootstrap_bind.parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Invalid bootstrap_bind: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    let authenticated_bind = match custom_config.authenticated_bind.parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Invalid authenticated_bind: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    let server_config = runar_transporter::CaServerConfig {
+        bootstrap_bind,
+        authenticated_bind,
+        network_id: custom_config.network_id,
+        rate_limit_config: runar_transporter::RateLimitConfig {
+            burst_limit: custom_config.rate_limit_per_minute,
+            sustained_limit: custom_config.rate_limit_per_hour,
+            burst_window: std::time::Duration::from_secs(60),
+            sustained_window: std::time::Duration::from_secs(3600),
+        },
+        admin_skis: vec![],
+        additional_ca_certs: vec![],
+    };
+
+    // Create the CA server using the shared CA Node reference
+    let server = CaServer::new(server_config, ca_node_arc.clone(), Arc::new(logger.clone()));
+
+    let wrapper = CaServerWrapper {
+        server,
+        bootstrap_addr: None,
+        authenticated_addr: None,
+    };
+
+    let boxed_wrapper = Box::new(wrapper);
+    unsafe {
+        *out_server = Box::into_raw(boxed_wrapper) as *mut c_void;
+    }
+
+    0
+}
+
+/// Free CA Server (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_free(server: *mut c_void) {
+    if !server.is_null() {
+        let _ = Box::from_raw(server as *mut CaServerWrapper);
+    }
+}
+
+/// Configure admin SKIs (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_configure_admin_skis(
+    server: *mut c_void,
+    admin_skis: *const u8,
+    skis_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if server.is_null() || admin_skis.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let server = &mut *(server as *mut CaServer);
+
+    // Parse admin SKIs
+    let skis_data = std::slice::from_raw_parts(admin_skis, skis_len);
+    let admin_skis_vec = match serde_cbor::from_slice::<Vec<String>>(skis_data) {
+        Ok(skis) => skis,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse admin SKIs: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Configure admin SKIs
+    server.configure_admin_skis(admin_skis_vec);
+    0
+}
+
+/// Start CA Server (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_start(
+    server: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if server.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Initialize RustLS crypto provider before starting CA server
+    let _ = aws_lc_rs::default_provider().install_default();
+
+    let wrapper = &mut *(server as *mut CaServerWrapper);
+
+    // Start the server using shared runtime
+    match runtime().block_on(wrapper.server.start()) {
+        Ok((bootstrap_addr, authenticated_addr)) => {
+            // Store the addresses in the wrapper for later retrieval
+            wrapper.bootstrap_addr = Some(bootstrap_addr.to_string());
+            wrapper.authenticated_addr = Some(authenticated_addr.to_string());
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to start server: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Stop CA Server (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_stop(
+    server: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if server.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper = &mut *(server as *mut CaServerWrapper);
+
+    // Stop the server using shared runtime
+    match runtime().block_on(wrapper.server.stop()) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to stop server: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Get bootstrap address (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_get_bootstrap_addr(
+    server: *mut c_void,
+    out_addr: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if server.is_null() || out_addr.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper_ref = &*(server as *const CaServerWrapper);
+
+    // Get the bootstrap address from the wrapper (actual bound address)
+    let addr_str = match wrapper_ref.bootstrap_addr.as_ref() {
+        Some(addr) => addr,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Server not started or address not available",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let addr_cstring = match std::ffi::CString::new(addr_str.as_str()) {
+        Ok(cstr) => cstr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create C string: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    *out_addr = addr_cstring.into_raw();
+    0
+}
+
+/// Get authenticated address (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_get_authenticated_addr(
+    server: *mut c_void,
+    out_addr: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if server.is_null() || out_addr.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper_ref = &*(server as *const CaServerWrapper);
+
+    // Get the authenticated address from the wrapper (actual bound address)
+    let addr_str = match wrapper_ref.authenticated_addr.as_ref() {
+        Some(addr) => addr,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Server not started or address not available",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let addr_cstring = match std::ffi::CString::new(addr_str.as_str()) {
+        Ok(cstr) => cstr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create C string: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    *out_addr = addr_cstring.into_raw();
+    0
+}
+
+// ============================================================================
+// PROFILE KEY MANAGEMENT FFI FUNCTIONS (PHASE 2)
+// ============================================================================
+
+/// Derive user profile key (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_derive_user_profile_key(
+    keys: *mut c_void,
+    label: *const c_char,
+    out_public_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || label.is_null()
+        || out_public_key.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let label_str = match unsafe { std::ffi::CStr::from_ptr(label).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in label");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let mut mgr = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.derive_user_profile_key(label_str) {
+        Ok(public_key) => {
+            if !alloc_bytes(out_public_key, out_len, &public_key) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to derive profile key: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Decrypt envelope data using profile key (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_decrypt_with_profile(
+    keys: *mut c_void,
+    envelope_data: *const u8,
+    envelope_len: usize,
+    profile_id: *const c_char,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || envelope_data.is_null()
+        || profile_id.is_null()
+        || out_data.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let profile_id_str = match unsafe { std::ffi::CStr::from_ptr(profile_id).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in profile_id");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse envelope data from CBOR
+    let envelope_bytes = unsafe { std::slice::from_raw_parts(envelope_data, envelope_len) };
+    let envelope_data: runar_keys::mobile::EnvelopeEncryptedData =
+        match serde_cbor::from_slice(envelope_bytes) {
+            Ok(env) => env,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("Failed to parse envelope data: {e}"),
+                );
+                return RN_ERROR_SERIALIZATION_FAILED;
+            }
+        };
+
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.decrypt_with_profile(&envelope_data, profile_id_str) {
+        Ok(decrypted) => {
+            if !alloc_bytes(out_data, out_len, &decrypted) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to decrypt with profile: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Install profile public key (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_profile_public_key(
+    keys: *mut c_void,
+    public_key: *const u8,
+    public_key_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || public_key.is_null() || err.is_null() {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let public_key_bytes =
+        unsafe { std::slice::from_raw_parts(public_key, public_key_len) }.to_vec();
+
+    if let Ok(mut mgr) = manager.write() {
+        mgr.install_profile_public_key(public_key_bytes);
+    }
+    0
+}
+
+/// Get profile public key by label (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_profile_public_key_by_label(
+    keys: *mut c_void,
+    label: *const c_char,
+    out_public_key: *mut *mut u8,
+    out_public_key_len: *mut usize,
+    out_has_key: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || label.is_null()
+        || out_public_key.is_null()
+        || out_public_key_len.is_null()
+        || out_has_key.is_null()
+        || err.is_null()
+    {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let label_str = match unsafe { std::ffi::CStr::from_ptr(label).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in label");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Get profile public key by label
+    if let Ok(mgr) = manager.read() {
+        if let Some(public_key) = mgr.get_profile_public_key_by_label(label_str) {
+            if !alloc_bytes(out_public_key, out_public_key_len, public_key.as_slice()) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
+            }
+            unsafe {
+                *out_has_key = 1;
+            }
+            return 0;
+        }
+    }
+
+    unsafe {
+        *out_public_key = ptr::null_mut();
+        *out_public_key_len = 0;
+        *out_has_key = 0;
+    }
+    0
+}
+
+// ============================================================================
+// CERTIFICATE MANAGEMENT FFI FUNCTIONS (PHASE 2)
+// ============================================================================
+
+/// Get certificate status
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_certificate_status(
+    keys: *mut c_void,
+    out_status: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_status.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let status = if let Ok(mgr) = manager.read() {
+        mgr.get_certificate_status()
+    } else {
+        runar_keys::node::CertificateStatus::None
+    };
+    let status_code = match status {
+        runar_keys::node::CertificateStatus::None => 0,
+        runar_keys::node::CertificateStatus::Pending => 1,
+        runar_keys::node::CertificateStatus::Valid => 2,
+        runar_keys::node::CertificateStatus::Invalid => 3,
+    };
+
+    unsafe {
+        *out_status = status_code;
+    }
+    0
+}
+/// Get certificate serial number
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_certificate_serial(
+    keys: *mut c_void,
+    out_serial: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_serial.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.get_node_certificate() {
+        Some(cert) => match cert.parsed() {
+            Ok(parsed_cert) => {
+                let serial_hex = parsed_cert.serial.to_string();
+                if alloc_string_simple(out_serial, &serial_hex) {
+                    0
+                } else {
+                    set_error(
+                        err,
+                        RN_ERROR_MEMORY_ALLOCATION,
+                        "Failed to allocate serial string",
+                    );
+                    RN_ERROR_MEMORY_ALLOCATION
+                }
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to parse certificate: {e}"),
+                );
+                RN_ERROR_OPERATION_FAILED
+            }
+        },
+        None => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "No certificate installed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Validate peer certificate
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_validate_peer_certificate(
+    keys: *mut c_void,
+    peer_cert: *const u8,
+    cert_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || peer_cert.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    if cert_len == 0 {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "certificate length is zero");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    // Parse the peer certificate
+    let cert_der = unsafe { std::slice::from_raw_parts(peer_cert, cert_len) };
+    let cert_der_vec = cert_der.to_vec();
+    let peer_cert = match runar_keys::certificate::X509Certificate::from_der(cert_der_vec) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Validate the certificate
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.validate_peer_certificate(&peer_cert) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Certificate validation failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+// ============================================================================
+// NETWORK KEY MANAGEMENT FFI FUNCTIONS (PHASE 2)
+// ============================================================================
+
+/// Install network key (v2 API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_network_key(
+    keys: *mut c_void,
+    network_key_message: *const u8,
+    message_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || network_key_message.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    if message_len == 0 {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "message length is zero");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    // Parse the network key message
+    let message_bytes = unsafe { std::slice::from_raw_parts(network_key_message, message_len) };
+    let network_key_message =
+        match serde_cbor::from_slice::<runar_keys::mobile::NetworkKeyMessage>(message_bytes) {
+            Ok(msg) => msg,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("Failed to parse network key message: {e}"),
+                );
+                return RN_ERROR_SERIALIZATION_FAILED;
+            }
+        };
+
+    // Install the network key
+    let mut mgr = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.install_network_key(network_key_message) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to install network key: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Get network agreement
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_network_agreement(
+    keys: *mut c_void,
+    network_public_key: *const u8,
+    key_len: usize,
+    out_agreement: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || network_public_key.is_null()
+        || out_agreement.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    if key_len == 0 {
+        set_error(
+            err,
+            RN_ERROR_INVALID_ARGUMENT,
+            "network public key length is zero",
+        );
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let network_public_key_bytes =
+        unsafe { std::slice::from_raw_parts(network_public_key, key_len) };
+
+    // Get the network agreement
+    let manager_guard = match manager.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    let agreement = match manager_guard.get_network_agreement(network_public_key_bytes) {
+        Ok(agreement) => agreement,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to get network agreement: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Convert the secret key to bytes
+    let agreement_bytes = agreement.to_bytes().to_vec();
+    if !alloc_bytes(out_agreement, out_len, &agreement_bytes) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
+}
+
+/// Check if node has network private key
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_has_network_private_key(
+    keys: *mut c_void,
+    network_public_key: *const u8,
+    key_len: usize,
+    out_has_key: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || network_public_key.is_null() || out_has_key.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    if key_len == 0 {
+        set_error(
+            err,
+            RN_ERROR_INVALID_ARGUMENT,
+            "network public key length is zero",
+        );
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let network_public_key_bytes =
+        unsafe { std::slice::from_raw_parts(network_public_key, key_len) };
+
+    // Check if we have the network private key
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    let has_key = mgr.has_network_private_key(network_public_key_bytes);
+    unsafe {
+        *out_has_key = if has_key { 1 } else { 0 };
+    }
+    0
+}
+
+/// Get network public key by network ID for node key manager
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_network_public_key_by_id(
+    keys: *mut c_void,
+    network_id: *const std::os::raw::c_char,
+    out_public_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom(
+        "rn_keys_node_get_network_public_key_by_id",
+    ));
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Starting function"
+    );
+    log_trace!(logger, "  keys: {:?}", keys);
+    log_trace!(logger, "  network_id: {:?}", network_id);
+
+    // Validate parameters upfront
+    if keys.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: keys handle is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if network_id.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: network_id pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_public_key.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: output public_key pointer is null"
+        );
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output public_key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: output length pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Parameter validation passed"
+    );
+
+    let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: keys handle is null in with_keys_inner"
+        );
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Got keys inner"
+    );
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_network_public_key_by_id: validate_node_manager failed: {}",
+                e.message()
+            );
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Node manager validated"
+    );
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_network_public_key_by_id: failed to acquire lock"
+            );
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Got node manager lock"
+    );
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_network_public_key_by_id: invalid UTF-8 in network_id: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                "invalid UTF-8 in network_id",
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: network_id: {}",
+        network_id_str
+    );
+
+    let public_key = match node_manager.get_network_public_key_by_id(network_id_str) {
+        Ok(pk) => pk,
+        Err(e) => {
+            log_error!(logger, "rn_keys_node_get_network_public_key_by_id: get_network_public_key_by_id failed: {}", e);
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("get_network_public_key_by_id failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: public_key len: {}",
+        public_key.len()
+    );
+
+    if !alloc_bytes(out_public_key, out_len, &public_key) {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: alloc_bytes failed"
+        );
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: returning 0 (success)"
+    );
+    0
+}
+
+// ============================================================================
+// CA CLIENT FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// CA Client Configuration with all options (CBOR-serialized)
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CaClientConfigAll {
+    pub bootstrap_server: String,
+    pub authenticated_server: String,
+    pub network_id: String,
+    pub request_timeout_seconds: u32,
+    pub max_retries: u32,
+    pub root_ca_der: Vec<u8>,    // Required, not optional
+    pub issuing_ca_der: Vec<u8>, // Required, not optional
+}
+
+/// Create new CA Client (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
+    config_cbor: *const u8,
+    config_len: usize,
+    node_keys: *mut c_void,
+    out_client: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if config_cbor.is_null() || node_keys.is_null() || out_client.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Transporter);
+
+    // Parse configuration CBOR
+    let config_data = std::slice::from_raw_parts(config_cbor, config_len);
+    let config: CaClientConfigAll = match serde_cbor::from_slice(config_data) {
+        Ok(config) => config,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse config CBOR: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // Extract the NodeKeyManager from the FFI handle
+    let Some(inner) = with_keys_inner(node_keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let node_key_manager_arc = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_HANDLE,
+                &format!("Invalid node manager: {e:?}"),
+            );
+            return RN_ERROR_INVALID_HANDLE;
+        }
+    };
+
+    // Parse server addresses
+    let bootstrap_addr = match config.bootstrap_server.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid bootstrap server address: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    let authenticated_addr = match config.authenticated_server.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid authenticated server address: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // Create CaClientConfig
+    let client_config = runar_transporter::CaClientConfig {
+        bootstrap_server: bootstrap_addr,
+        authenticated_server: authenticated_addr,
+        network_id: config.network_id,
+        request_timeout: std::time::Duration::from_secs(config.request_timeout_seconds as u64),
+        max_retries: config.max_retries,
+    };
+
+    // Create client with all configuration at once (following working test pattern)
+    log_trace!(
+        logger,
+        "FFI client creation - creating CaClientBuilder with config"
+    );
+    let client = match CaClientBuilder::new()
+        .with_config(client_config.clone())
+        .with_node_key_manager(Arc::clone(node_key_manager_arc))
+        .with_logger(Arc::new(logger.clone()))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to build CA client: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Add certificates after build, like working test
+    let client = client
+        .with_root_ca_cert(config.root_ca_der.clone())
+        .with_issuing_ca_cert(config.issuing_ca_der.clone());
+
+    log_trace!(
+        logger,
+        "FFI client creation - client created successfully with certificates"
+    );
+
+    let wrapper = CaClientWrapper {
+        client,
+        config: client_config,
+        logger: Arc::new(logger),
+        root_ca_cert: config.root_ca_der,
+        issuing_ca_cert: config.issuing_ca_der,
+        node_key_manager: Some(node_key_manager_arc.clone()),
+    };
+
+    let boxed_wrapper = Box::new(wrapper);
+    unsafe {
+        *out_client = Box::into_raw(boxed_wrapper) as *mut c_void;
+    }
+
+    0
+}
+
+/// Free CA Client (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_free(client: *mut c_void) {
+    if !client.is_null() {
+        let _ = Box::from_raw(client as *mut CaClientWrapper);
+    }
+}
+
+/// CA Client enroll (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_enroll(
+    client: *mut c_void,
+    bootstrap_addr: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null()
+        || bootstrap_addr.is_null()
+        || request.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Initialize RustLS crypto provider before CA client operations
+    let _ = aws_lc_rs::default_provider().install_default();
+
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
+    let logger = &wrapper.logger;
+
+    // Parse bootstrap address
+    let _bootstrap_addr_str = match std::ffi::CStr::from_ptr(bootstrap_addr).to_str() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid bootstrap address: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse the enrollment request
+    log_trace!(
+        logger,
+        "FFI enroll - parsing enrollment request ({request_len} bytes)"
+    );
+    let request_data = std::slice::from_raw_parts(request, request_len);
+    let enroll_request = match serde_cbor::from_slice::<CsrEnrollRequest>(request_data) {
+        Ok(req) => {
+            log_trace!(logger, "FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}",
+                req.network_id, req.csr_der.len(), req.enrollment_token.body.token_id);
+            req
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "FFI enroll - failed to parse enrollment request: {e}"
+            );
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse enrollment request: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Perform enrollment (using configured bootstrap address from client config)
+    let bootstrap_addr_from_config = wrapper.config.bootstrap_server;
+    log_debug!(
+        logger,
+        "FFI enroll - using bootstrap address from config: {bootstrap_addr_from_config}"
+    );
+    log_trace!(
+        logger,
+        "FFI enroll - bootstrap_addr parameter (ignored): {_bootstrap_addr_str}"
+    );
+
+    log_trace!(logger, "FFI enroll - client configuration: root_ca_cert={} bytes, issuing_ca_cert={} bytes, node_key_manager={}, network_id={}, request_timeout={:?}, max_retries={}",
+        wrapper.root_ca_cert.len(), wrapper.issuing_ca_cert.len(), wrapper.node_key_manager.is_some(),
+        wrapper.config.network_id, wrapper.config.request_timeout, wrapper.config.max_retries);
+
+    log_trace!(logger, "FFI enroll - starting enrollment call with config: bootstrap={}, authenticated={}, network_id={}",
+        wrapper.config.bootstrap_server, wrapper.config.authenticated_server, wrapper.config.network_id);
+
+    // Add a small delay to ensure server is ready
+    log_trace!(
+        logger,
+        "FFI enroll - adding small delay to ensure server readiness"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    log_trace!(logger, "FFI enroll - calling client.enroll()...");
+    match runtime().block_on(client.enroll(enroll_request)) {
+        Ok(response) => {
+            log_debug!(
+                logger,
+                "FFI enroll - enrollment successful, serializing response"
+            );
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    let response_len = response_data.len();
+                    log_debug!(
+                        logger,
+                        "FFI enroll - response serialized successfully ({response_len} bytes)"
+                    );
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    log_trace!(logger, "FFI enroll - enrollment completed successfully");
+                    0
+                }
+                Err(e) => {
+                    log_error!(logger, "FFI enroll - failed to serialize response: {e}");
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            log_error!(logger, "FFI enroll - enrollment failed: {e:?}");
+            let mut error_chain = String::new();
+            let mut source = e.source();
+            let mut level = 0;
+            while let Some(err) = source {
+                error_chain.push_str(&format!("level {level}: {err}; "));
+                source = err.source();
+                level += 1;
+            }
+            if !error_chain.is_empty() {
+                log_debug!(
+                    logger,
+                    "FFI enroll - error chain: {}",
+                    error_chain.trim_end_matches("; ")
+                );
+            }
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Enrollment failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// CA Client renew (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_renew(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_transport_ca_client_renew"));
+
+    if client.is_null()
+        || authenticated_addr.is_null()
+        || request.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        log_error!(
+            logger,
+            "rn_transport_ca_client_renew: null argument detected"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper = &*(client as *const CaClientWrapper);
+    log_trace!(
+        logger,
+        "rn_transport_ca_client_renew: arguments validated, initializing crypto provider"
+    );
+    // Initialize RustLS crypto provider before CA client operations
+    let _ = aws_lc_rs::default_provider().install_default();
+    let client = &wrapper.client;
+
+    log_trace!(
+        logger,
+        "rn_transport_ca_client_renew: parsing renewal request from {} bytes",
+        request_len
+    );
+    // Parse the renewal request
+    let request_data = std::slice::from_raw_parts(request, request_len);
+    let renew_request = match serde_cbor::from_slice::<RenewRequest>(request_data) {
+        Ok(req) => {
+            log_trace!(
+                logger,
+                "rn_transport_ca_client_renew: successfully parsed renewal request"
+            );
+            req
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_transport_ca_client_renew: failed to parse renewal request: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse renewal request: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_transport_ca_client_renew: calling client.renew with parsed request"
+    );
+    // Perform renewal using shared runtime
+    match runtime().block_on(client.renew(renew_request)) {
+        Ok(response) => {
+            log_trace!(
+                logger,
+                "rn_transport_ca_client_renew: client.renew succeeded, serializing response"
+            );
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    let response_len = response_data.len();
+                    log_trace!(
+                        logger,
+                        "rn_transport_ca_client_renew: response serialized to {} bytes",
+                        response_len
+                    );
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    log_trace!(
+                        logger,
+                        "rn_transport_ca_client_renew: returning success with {} bytes",
+                        response_len
+                    );
+                    0
+                }
+                Err(e) => {
+                    log_error!(
+                        logger,
+                        "rn_transport_ca_client_renew: failed to serialize response: {}",
+                        e
+                    );
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_transport_ca_client_renew: client.renew failed: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Renewal failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+/// CA Client revoke (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_revoke(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null()
+        || authenticated_addr.is_null()
+        || request.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
+
+    // Parse the revocation request
+    let request_data = std::slice::from_raw_parts(request, request_len);
+    let revoke_request = match serde_cbor::from_slice::<RevokeRequest>(request_data) {
+        Ok(req) => req,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse revocation request: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Perform revocation using shared runtime
+    match runtime().block_on(client.revoke(revoke_request)) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Revocation failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// CA Client get chain (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_get_chain(
+    client: *mut c_void,
+    bootstrap_addr: *const c_char,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null()
+        || bootstrap_addr.is_null()
+        || network_id.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
+
+    // Fetch chain using shared runtime
+    match runtime().block_on(client.fetch_chain()) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Chain fetch failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// CA Client get status (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_get_status(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null()
+        || authenticated_addr.is_null()
+        || network_id.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
+
+    // Get status using shared runtime
+    match runtime().block_on(client.get_status()) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Status fetch failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// CA Client get CRL (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
+    client: *mut c_void,
+    authenticated_addr: *const c_char,
+    network_id: *const c_char,
+    out_response: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null()
+        || authenticated_addr.is_null()
+        || network_id.is_null()
+        || out_response.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
+
+    // Fetch CRL using shared runtime
+    match runtime().block_on(client.fetch_crl()) {
+        Ok(response) => {
+            // Serialize the response
+            match serde_cbor::to_vec(&response) {
+                Ok(response_data) => {
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize response: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("CRL fetch failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Install certificate for node key manager
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_certificate(
+    keys: *mut c_void,
+    certificate_data: *const u8,
+    cert_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_node_install_certificate"));
+
+    if keys.is_null() || certificate_data.is_null() || err.is_null() {
+        log_error!(logger, "rn_keys_node_install_certificate: null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_node_install_certificate: invalid keys handle"
+        );
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_install_certificate: failed to validate node manager: {:?}",
+                e
+            );
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let cert_data = std::slice::from_raw_parts(certificate_data, cert_len);
+    log_trace!(
+        logger,
+        "rn_keys_node_install_certificate: certificate data length: {}, first 20 bytes: {:?}",
+        cert_len,
+        &cert_data[..cert_len.min(20)]
+    );
+
+    // Parse the certificate message
+    log_trace!(
+        logger,
+        "rn_keys_node_install_certificate: attempting to parse certificate as CBOR"
+    );
+    match serde_cbor::from_slice::<NodeCertificateMessage>(cert_data) {
+        Ok(cert_message) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_install_certificate: successfully parsed certificate message"
+            );
+            let mut mgr = match manager.write() {
+                Ok(mgr) => mgr,
+                Err(_) => {
+                    log_error!(
+                        logger,
+                        "rn_keys_node_install_certificate: failed to acquire write lock"
+                    );
+                    set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
+                    return RN_ERROR_LOCK_ERROR;
+                }
+            };
+            log_trace!(
+                logger,
+                "rn_keys_node_install_certificate: calling mgr.install_certificate"
+            );
+            match mgr.install_certificate(cert_message) {
+                Ok(_) => {
+                    log_trace!(
+                        logger,
+                        "rn_keys_node_install_certificate: certificate installed successfully"
+                    );
+                    0
+                }
+                Err(e) => {
+                    log_error!(
+                        logger,
+                        "rn_keys_node_install_certificate: failed to install certificate: {}",
+                        e
+                    );
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to install certificate: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_install_certificate: failed to parse certificate as CBOR: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse certificate message: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+// ============================================================================
+// CA Client Configuration APIs
+// ============================================================================
+
+/// Get compact ID for profile key
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_get_compact_id(
+    public_key: *const u8,
+    key_len: usize,
+    out_id: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if public_key.is_null() || out_id.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let key_data = std::slice::from_raw_parts(public_key, key_len);
+
+    // Generate compact ID using runar-keys function
+    let compact_id = runar_common::compact_ids::compact_id(key_data);
+
+    // Convert to C string
+    match CString::new(compact_id) {
+        Ok(id_cstr) => {
+            *out_id = id_cstr.into_raw();
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to create compact ID string: {e}"),
+            );
+            RN_ERROR_INVALID_UTF8
+        }
+    }
+}
+
+/// Revoke enrollment token
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_revoke_token(
+    shared_ca_node: *mut c_void,
+    token_id: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null() || token_id.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Parse token ID string
+    let token_id_str = match std::ffi::CStr::from_ptr(token_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid token ID string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Get CA Node reference
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Revoke token using runar-keys function
+    match ca_node_guard.revoke_token(token_id_str.to_string()) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to revoke token: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Generate CRL-lite
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_generate_crl_lite(
+    shared_ca_node: *mut c_void,
+    out_crl: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if shared_ca_node.is_null() || out_crl.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Get CA Node reference
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Generate CRL-lite using runar-keys function
+    match ca_node_guard.generate_crl_lite() {
+        Ok(crl) => {
+            // Serialize CRL to CBOR
+            match serde_cbor::to_vec(&crl) {
+                Ok(crl_cbor) => {
+                    if !alloc_bytes(out_crl, out_len, &crl_cbor) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize CRL: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate CRL: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
 }

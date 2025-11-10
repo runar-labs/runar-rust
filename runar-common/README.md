@@ -24,7 +24,7 @@ Logging
 -------
 
 ```rust
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 
 let root = Logger::new_root(Component::Node, "node-123");
 let svc = root.with_component(Component::Service);

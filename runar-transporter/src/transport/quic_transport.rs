@@ -1,11 +1,10 @@
 use runar_schemas::NodeInfo;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::{
-    cmp::Ordering,
     error::Error,
     fmt::{Debug, Formatter, Result as FmtResult},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, RwLock as StdRwLock},
 };
 
 use async_trait::async_trait;
@@ -15,10 +14,10 @@ use quinn::{
     SendStream, ServerConfig, TransportConfig, VarInt,
 };
 use rand::{rngs::ThreadRng, Rng};
-use runar_common::{compact_ids::compact_id, logging::Logger, Component};
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
-use rustls::crypto::ring;
-use rustls::{crypto::CryptoProvider, ClientConfig as RustlsClientConfig, RootCertStore};
+use runar_common::compact_ids::compact_id;
+use runar_logging::{log_debug, log_error, log_info, log_trace, log_warn};
+use runar_logging::{Component, Logger};
+use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::time::{Duration, Instant};
@@ -35,7 +34,7 @@ use uuid::Uuid;
 use crate::discovery::multicast_discovery::PeerInfo;
 
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
-use runar_keys::NodeKeyManager;
+use runar_keys::{ca_node::CANode, NodeKeyManager};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 // No direct use of ServerName; rely on rustls SNI handling.
@@ -72,7 +71,7 @@ pub struct QuicTransportOptions {
     // Effective maximum message size (bytes) enforced by framing
     max_message_size: Option<usize>,
     // Optional: use key manager directly for certs/keys/roots
-    key_manager: Option<Arc<NodeKeyManager>>,
+    key_manager: Option<Arc<StdRwLock<NodeKeyManager>>>,
 }
 
 impl Debug for QuicTransportOptions {
@@ -242,7 +241,7 @@ impl QuicTransportOptions {
 
     pub fn with_logger_from_node_id(mut self, node_id: String) -> Self {
         let logger = Arc::new(Logger::new_root(Component::Transporter));
-        logger.set_node_id(node_id);
+        logger.set_context(node_id);
         self.logger = Some(logger);
         self
     }
@@ -272,7 +271,7 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_key_manager(mut self, key_manager: Arc<NodeKeyManager>) -> Self {
+    pub fn with_key_manager(mut self, key_manager: Arc<StdRwLock<NodeKeyManager>>) -> Self {
         self.key_manager = Some(key_manager);
         self
     }
@@ -311,7 +310,7 @@ impl QuicTransportOptions {
         self.max_message_size
     }
 
-    pub fn key_manager(&self) -> Option<&Arc<NodeKeyManager>> {
+    pub fn key_manager(&self) -> Option<&Arc<StdRwLock<NodeKeyManager>>> {
         self.key_manager.as_ref()
     }
 }
@@ -437,6 +436,10 @@ pub struct QuicTransport {
 
     // Per-peer connect guards to avoid concurrent connects
     peer_connect_mutexes: Arc<DashMap<String, Arc<Mutex<()>>>>,
+
+    // CA Node for CRL validation
+    #[allow(dead_code)]
+    ca_node: Option<Arc<StdRwLock<CANode>>>,
     // shared runtime state (peers + broadcast)
     state: SharedState,
 
@@ -460,32 +463,6 @@ impl QuicTransport {
             .entry(peer_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
-    }
-
-    // Deprecated: nonce-based winner decision. Left for reference.
-    fn _decide_connection_winner_legacy(
-        &self,
-        existing: (&str, u64, &str, u64),
-        candidate: (&str, u64, &str, u64),
-    ) -> bool {
-        fn canonical_key<'a>(
-            a_id: &'a str,
-            a_nonce: u64,
-            b_id: &'a str,
-            b_nonce: u64,
-        ) -> (Ordering, &'a str, u64, &'a str, u64) {
-            if a_id <= b_id {
-                (Ordering::Less, a_id, a_nonce, b_id, b_nonce)
-            } else {
-                (Ordering::Greater, b_id, b_nonce, a_id, a_nonce)
-            }
-        }
-        let (_e_ord, e_low_id, e_low_nonce, e_high_id, e_high_nonce) =
-            canonical_key(existing.0, existing.1, existing.2, existing.3);
-        let (_c_ord, c_low_id, c_low_nonce, c_high_id, c_high_nonce) =
-            canonical_key(candidate.0, candidate.1, candidate.2, candidate.3);
-        (c_low_id, c_low_nonce, c_high_id, c_high_nonce)
-            < (e_low_id, e_low_nonce, e_high_id, e_high_nonce)
     }
 
     async fn replace_or_keep_connection(
@@ -664,11 +641,8 @@ impl QuicTransport {
             .ok_or_else(|| NetworkError::ConfigurationError("logger is required".into()))?)
         .with_component(Component::Transporter);
 
-        if CryptoProvider::get_default().is_none() {
-            ring::default_provider()
-                .install_default()
-                .expect("Failed to install default crypto provider");
-        }
+        // Try to install the crypto provider, but don't fail if it's already installed
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         // Basic configuration validation
         if options.max_message_size.unwrap_or(0) == 0 {
@@ -731,6 +705,7 @@ impl QuicTransport {
             response_cache: DashMap::new(),
             response_cache_ttl: cache_ttl,
             max_request_retries,
+            ca_node: None, // TODO: Add CA Node configuration
         })
     }
 
@@ -738,11 +713,15 @@ impl QuicTransport {
         // Resolve certificates and private key either from key manager or explicit options
         let (certs, key): (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) =
             if let Some(km) = self.options.key_manager() {
-                let cfg = km.get_quic_certificate_config().map_err(|e| {
-                    NetworkError::ConfigurationError(format!(
-                        "Failed to get QUIC certificate config from key manager: {e}"
-                    ))
-                })?;
+                let cfg = km
+                    .read()
+                    .unwrap()
+                    .get_quic_certificate_config()
+                    .map_err(|e| {
+                        NetworkError::ConfigurationError(format!(
+                            "Failed to get QUIC certificate config from key manager: {e}"
+                        ))
+                    })?;
                 (cfg.certificate_chain, cfg.private_key)
             } else {
                 let certs = self
@@ -778,11 +757,31 @@ impl QuicTransport {
 
         let transport_config = Arc::new(transport_config);
 
-        // Create server configuration using Quinn 0.11.x API with custom transport config
-        let mut server_config = ServerConfig::with_single_cert(certs.clone(), key.clone_key())
+        // Create server configuration with mTLS (require client certificates)
+        let root_store = self.build_root_cert_store()?;
+        let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
             .map_err(|e| {
-                NetworkError::ConfigurationError(format!("Failed to create server config: {e}"))
+                NetworkError::ConfigurationError(format!("Failed to create client verifier: {e}"))
             })?;
+
+        let rustls_server_config = rustls::ServerConfig::builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(certs.clone(), key.clone_key())
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to create rustls server config: {e}"
+                ))
+            })?;
+
+        let server_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_server_config)
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to convert to Quinn server config: {e}"
+                ))
+            })?;
+
+        let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
         server_config.transport_config(transport_config.clone());
 
         // Build a strict rustls client config with provided root certificates (or CA from key manager).
@@ -796,9 +795,13 @@ impl QuicTransport {
             }
         } else if let Some(km) = self.options.key_manager() {
             // Use CA from key manager certificate chain (append all for simplicity)
-            let cfg = km.get_quic_certificate_config().map_err(|e| {
-                NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}"))
-            })?;
+            let cfg = km
+                .read()
+                .unwrap()
+                .get_quic_certificate_config()
+                .map_err(|e| {
+                    NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}"))
+                })?;
             for der in cfg.certificate_chain.iter() {
                 root_store.add(der.clone()).map_err(|e| {
                     NetworkError::ConfigurationError(format!("Failed to add key-manager root: {e}"))
@@ -809,9 +812,17 @@ impl QuicTransport {
                 "no root certificates configured".into(),
             ));
         }
+        // Get client certificate and private key from key manager
+        let (client_cert_chain, client_private_key) = self.get_client_certificates()?;
+
         let rustls_client_config = RustlsClientConfig::builder()
             .with_root_certificates(root_store)
-            .with_no_client_auth();
+            .with_client_auth_cert(client_cert_chain, client_private_key)
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to create client config with auth: {e}"
+                ))
+            })?;
 
         let mut client_config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(rustls_client_config).map_err(|e| {
@@ -847,6 +858,13 @@ impl QuicTransport {
                 if let Some(connecting) = endpoint.accept().await {
                     match connecting.await {
                         Ok(conn) => {
+                            // TODO: Validate peer certificate against CRL-lite
+                            // For now, skip CRL validation until we implement proper peer certificate access
+                            // if let Err(e) = self_clone.validate_peer_certificate_against_crl(&conn.peer_identity().unwrap().certificates[0]).await {
+                            //     log_error!(self_clone.logger, "CRL validation failed: {e}");
+                            //     continue; // Skip this connection
+                            // }
+
                             let task = self_clone
                                 .clone()
                                 .spawn_connection_tasks("inbound".to_string(), Arc::new(conn));
@@ -1051,7 +1069,7 @@ impl QuicTransport {
 
         match from_slice::<NetworkMessage>(&msg_buf) {
             Ok(msg) => {
-                log_debug!(self.logger, "[read_message] Decoded message: type={type}, source={source}, dest={dest}", 
+                log_debug!(self.logger, "[read_message] Decoded message: type={type}, source={source}, dest={dest}",
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
                 Ok(msg)
             }
@@ -1209,9 +1227,19 @@ impl QuicTransport {
         if should_send_response {
             self.logger
                 .debug("[handle_handshake] Sending handshake response");
+            log_trace!(
+                self.logger,
+                "[handle_handshake] Calling get_local_node_info callback for handshake response"
+            );
             let local_node_info = (self.get_local_node_info)()
                 .await
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+            log_trace!(
+                self.logger,
+                "[handle_handshake] Got NodeInfo with {} services, {} subscriptions for handshake response",
+                local_node_info.node_metadata.services.len(),
+                local_node_info.node_metadata.subscriptions.len()
+            );
             let source_node_id = self.local_node_id.clone();
             let response_hs = HandshakeData {
                 node_info: local_node_info,
@@ -1352,9 +1380,19 @@ impl QuicTransport {
             "[handshake_outbound] Starting handshake with peer: {peer_id}"
         );
 
+        log_trace!(
+            self.logger,
+            "[handshake_outbound] Calling get_local_node_info callback for outbound handshake"
+        );
         let local_node_info = (self.get_local_node_info)()
             .await
             .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+        log_trace!(
+            self.logger,
+            "[handshake_outbound] Got NodeInfo with {} services, {} subscriptions for outbound handshake",
+            local_node_info.node_metadata.services.len(),
+            local_node_info.node_metadata.subscriptions.len()
+        );
         let local_node_id = self.local_node_id.clone();
         let hs = HandshakeData {
             node_info: local_node_info,
@@ -1590,6 +1628,73 @@ impl QuicTransport {
             dial_backoff: Arc::new(DashMap::new()),
             dial_cancel: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Get client certificates from the key manager
+    fn get_client_certificates(
+        &self,
+    ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), NetworkError> {
+        let Some(key_manager) = &self.options.key_manager else {
+            return Err(NetworkError::ConfigurationError(
+                "No key manager configured for client certificates".to_string(),
+            ));
+        };
+
+        let cert_config = key_manager
+            .read()
+            .unwrap()
+            .get_quic_certificate_config()
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!("Failed to get client certificates: {e}"))
+            })?;
+
+        Ok((cert_config.certificate_chain, cert_config.private_key))
+    }
+
+    /// Build root certificate store from configured root certificates
+    fn build_root_cert_store(&self) -> Result<RootCertStore, NetworkError> {
+        let mut root_store = RootCertStore::empty();
+
+        if let Some(roots) = self.options.root_certificates() {
+            for cert in roots {
+                root_store.add(cert.clone()).map_err(|e| {
+                    NetworkError::ConfigurationError(format!("Failed to add root certificate: {e}"))
+                })?;
+            }
+        } else {
+            return Err(NetworkError::ConfigurationError(
+                "No root certificates configured for Quick Transport".to_string(),
+            ));
+        }
+
+        Ok(root_store)
+    }
+
+    /// Validate peer certificate against CRL-lite using CA Node
+    #[allow(dead_code)]
+    async fn validate_peer_certificate_against_crl(
+        &self,
+        peer_cert: &CertificateDer<'static>,
+    ) -> Result<(), NetworkError> {
+        // If no CA Node is configured, skip CRL validation
+        let Some(ca_node) = &self.ca_node else {
+            log_debug!(
+                self.logger,
+                "No CA Node configured, skipping CRL validation"
+            );
+            return Ok(());
+        };
+
+        // Validate certificate against CRL
+        let cert_der = peer_cert.as_ref();
+        ca_node
+            .read()
+            .unwrap()
+            .validate_certificate_against_crl(cert_der)
+            .map_err(|e| NetworkError::ConfigurationError(format!("CRL validation failed: {e}")))?;
+
+        log_debug!(self.logger, "Peer certificate passed CRL validation");
+        Ok(())
     }
 }
 
@@ -2084,6 +2189,13 @@ impl NetworkTransport for QuicTransport {
                 )));
             }
         };
+
+        // TODO: Validate peer certificate against CRL-lite
+        // For now, skip CRL validation until we implement proper peer certificate access
+        // if let Err(e) = self.validate_peer_certificate_against_crl(&conn.peer_identity().unwrap().certificates[0]).await {
+        //     log_error!(self.logger, "CRL validation failed for outbound connection: {e}");
+        //     return Err(NetworkError::ConnectionError(format!("CRL validation failed: {e}")));
+        // }
 
         self.logger
             .debug("[connect_peer] QUIC connection established successfully");

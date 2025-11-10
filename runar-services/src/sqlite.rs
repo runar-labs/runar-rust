@@ -2,8 +2,8 @@ use crate::replication::{ReplicationConfig, ReplicationManager};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use hex::encode;
-use runar_common::logging::Logger;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use runar_node::services::{EventContext, LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
@@ -858,6 +858,13 @@ impl AbstractService for SqliteService {
                                 // Extract table name from SQL statement
                                 if let Some(table_name) = extract_table_name(&sql_statement) {
                                     let table_name = table_name.clone();
+                                    let origin_node_id = req_ctx
+                                        .metadata
+                                        .get("node_id")
+                                        .ok_or_else(|| {
+                                            anyhow::anyhow!("Node ID not found in request metadata")
+                                        })?
+                                        .as_type::<String>()?;
                                     if replication_config.enabled_tables.contains(&table_name) {
                                         let event = crate::replication::SqliteEvent {
                                             operation: determine_operation_type(&trimmed_sql)
@@ -865,7 +872,7 @@ impl AbstractService for SqliteService {
                                             table: table_name.clone(),
                                             data: query_arc_value.clone(),
                                             timestamp: SystemTime::now(),
-                                            origin_node_id: req_ctx.logger.node_id().to_string(),
+                                            origin_node_id,
                                             origin_seq: service_clone
                                                 .next_origin_seq(&table_name)
                                                 .await

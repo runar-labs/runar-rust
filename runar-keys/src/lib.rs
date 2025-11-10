@@ -20,17 +20,28 @@
 //!     └── Used for all QUIC/TLS operations
 //! ```
 
+pub mod ca_node;
+pub mod ca_node_types;
 pub mod certificate;
 pub mod derivation;
+pub mod enrollment_token;
 pub mod error;
 pub mod mobile;
+
 pub mod node;
-#[macro_use]
-mod macros;
 pub mod pure_x509;
+#[cfg(test)]
+mod vec_vec_u8_integration_test;
 
 // Re-export key types for convenience
+pub use ca_node::CANode;
+pub use ca_node_types::{
+    CaErrorResponse, CaRevocationList, CaStatus, ChainResponse, CsrEnrollRequest,
+    CsrEnrollResponse, RateLimitState, RenewRequest, RenewResponse, RevokeRequest, RevokeResponse,
+    RevokedSerial,
+};
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
+pub use enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;
@@ -57,7 +68,7 @@ pub trait EnvelopeCrypto: Send + Sync {
     fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> Result<Vec<u8>>;
 
     /// Check if we have the private key for this network public key
-    fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>>;
+    fn has_network_private_key(&self, network_public_key: &[u8]) -> bool;
 
     /// Get network public key by network ID (needed for path resolution)
     fn get_network_public_key_by_id(&self, network_id: &str) -> Result<Vec<u8>>;

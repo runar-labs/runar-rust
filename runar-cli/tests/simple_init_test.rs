@@ -6,14 +6,12 @@
 use anyhow::{Context, Result};
 
 use runar_cli::NodeConfig;
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, Logger},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::{
     mobile::{MobileKeyManager, SetupToken},
     NodeKeyManager,
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -60,14 +58,37 @@ async fn test_simple_initialization_flow() -> Result<()> {
     // ==========================================
     println!("\n🖥️  STEP 2: Generating node keys and CSR");
 
+    // Create NodeKeyManager with full persistence setup (like the new CLI)
+    let key_logger = Arc::new(Logger::new_root(Component::Keys));
     let mut node_key_manager =
-        NodeKeyManager::new(logger.clone()).context("Failed to create node key manager")?;
+        NodeKeyManager::new(key_logger).context("Failed to create node key manager")?;
+
+    // Configure persistence directory
+    node_key_manager.set_persistence_dir(config_dir.clone());
+
+    // Register device keystore (OS integration)
+    let device_keystore = runar_cli::device_keystore::create_device_keystore_for_platform()
+        .context("Failed to create device keystore for platform")?;
+    node_key_manager.register_device_keystore(device_keystore);
+
+    // Check if already initialized
+    let state_loaded = node_key_manager
+        .probe_and_load_state()
+        .context("Failed to probe and load state")?;
+    if state_loaded {
+        return Err(anyhow::anyhow!("Node already initialized"));
+    }
+
+    // Generate keys for new node
+    node_key_manager
+        .generate_keys()
+        .context("Failed to generate node keys")?;
 
     let setup_token = node_key_manager
         .generate_csr()
         .context("Failed to generate certificate signing request")?;
 
-    let node_public_key = node_key_manager.get_node_public_key();
+    let node_public_key = node_key_manager.get_node_public_key().unwrap();
     let node_id = compact_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");
@@ -81,7 +102,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     let setup_config = runar_cli::init::SetupConfig::new(compact_id(&node_public_key));
 
     println!("   ✅ Setup configuration created:");
-    println!("      Keys Name: {}", setup_config.get_keys_name());
+    println!("      Persistence Dir: {config_dir:?}");
     println!("      Server: {}", setup_config.get_setup_server_address());
 
     // ==========================================
@@ -145,6 +166,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
         format!("network_{}", Uuid::new_v4()),
         hex::encode(&node_public_key),
         setup_config.get_setup_server().clone(),
+        config_dir.clone(),
     );
 
     final_config
@@ -208,7 +230,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     println!();
     println!("📊 CLI Test Statistics:");
     println!("   • Node ID: {node_id}");
-    println!("   • Keys Name: {}", setup_config.get_keys_name());
+    println!("   • Persistence Dir: {config_dir:?}");
     println!("   • Configuration: {config_dir:?}");
 
     Ok(())

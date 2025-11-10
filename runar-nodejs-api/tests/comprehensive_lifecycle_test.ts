@@ -73,6 +73,7 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     // which will be presented as QR code.. here in the test we use the token as a string directly.
 
     // Get the node public key (node ID) - keys are created in constructor
+    nodeKeys.nodeGenerateKeys(); // Generate keys after initialization
     const nodePublicKey = nodeKeys.nodeGetPublicKey();
     expect(nodePublicKey instanceof Uint8Array).toBe(true);
     expect(nodePublicKey.length).toBeGreaterThan(0);
@@ -187,11 +188,11 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
 
     // 5.1 Mobile encrypts with envelope
     // Get network public key from network ID for envelope encryption
-    const retrievedNetworkPublicKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
-    expect(retrievedNetworkPublicKey instanceof Uint8Array).toBe(true);
-    expect(retrievedNetworkPublicKey.length).toBeGreaterThan(0);
+    const hasNetworkPrivateKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
+    expect(typeof hasNetworkPrivateKey).toBe('boolean');
+    expect(hasNetworkPrivateKey).toBe(true);
     
-    const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, retrievedNetworkPublicKey, profilePks);
+    const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, networkPublicKey, profilePks);
     expect(encryptedData instanceof Uint8Array).toBe(true);
     expect(uint8ArrayEquals(encryptedData, testData)).toBe(false);
     console.log(`   ✅ Data encrypted with envelope: ${encryptedData.length} bytes`);

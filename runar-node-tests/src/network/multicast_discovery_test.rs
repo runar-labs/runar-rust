@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_transporter::discovery::{DiscoveryEvent, DEFAULT_MULTICAST_ADDR};
 use runar_transporter::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 use std::sync::Arc;
@@ -219,7 +219,9 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
         ..DiscoveryOptions::default()
     };
 
-    let logger = Logger::new_root(Component::Custom("Test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom(
+        "test_multicast_provider_restart_emits_again",
+    )));
 
     // Two nodes
     let node1_pk: [u8; 32] = rand::random();
@@ -309,7 +311,7 @@ async fn create_test_discovery(
     };
 
     // Create a logger for testing
-    let logger = Logger::new_root(Component::Custom("Test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom("create_test_discovery")));
 
     // Create a test node info using direct struct initialization
     let peer_info = PeerInfo {
@@ -638,7 +640,9 @@ async fn test_discovery_provider_stateless_behavior() -> Result<()> {
         ..DiscoveryOptions::default()
     };
 
-    let logger = Logger::new_root(Component::Custom("Test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom(
+        "test_discovery_provider_stateless_behavior",
+    )));
 
     // Create two discovery instances
     let node1_pk: [u8; 32] = rand::random();
@@ -731,7 +735,9 @@ async fn test_multicast_listener_survives_invalid_cbor() -> Result<()> {
         ..DiscoveryOptions::default()
     };
 
-    let logger = Logger::new_root(Component::Custom("Test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom(
+        "test_multicast_listener_survives_invalid_cbor",
+    )));
 
     // Two peers
     let node1_pk: [u8; 32] = rand::random();
@@ -802,7 +808,9 @@ async fn test_multicast_start_stop_idempotence() -> Result<()> {
         ..DiscoveryOptions::default()
     };
 
-    let logger = Logger::new_root(Component::Custom("IdemTest"));
+    let logger = Arc::new(Logger::new_root(Component::Custom(
+        "test_multicast_start_stop_idempotence",
+    )));
 
     let node1_pk: [u8; 32] = rand::random();
     let node2_pk: [u8; 32] = rand::random();

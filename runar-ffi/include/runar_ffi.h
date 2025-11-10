@@ -14,91 +14,108 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define RNAPIRN_ERROR_NULL_ARGUMENT 1
+#define RN_ERROR_NULL_ARGUMENT 1
 
-#define RNAPIRN_ERROR_INVALID_HANDLE 2
+#define RN_ERROR_INVALID_HANDLE 2
 
-#define RNAPIRN_ERROR_NOT_INITIALIZED 3
+#define RN_ERROR_NOT_INITIALIZED 3
 
-#define RNAPIRN_ERROR_WRONG_MANAGER_TYPE 4
+#define RN_ERROR_WRONG_MANAGER_TYPE 4
 
-#define RNAPIRN_ERROR_OPERATION_FAILED 5
+#define RN_ERROR_OPERATION_FAILED 5
 
-#define RNAPIRN_ERROR_SERIALIZATION_FAILED 6
+#define RN_ERROR_SERIALIZATION_FAILED 6
 
-#define RNAPIRN_ERROR_KEYSTORE_FAILED 7
+#define RN_ERROR_KEYSTORE_FAILED 7
 
-#define RNAPIRN_ERROR_MEMORY_ALLOCATION 12
+#define RN_ERROR_MEMORY_ALLOCATION 12
 
-#define RNAPIRN_ERROR_LOCK_ERROR 9
+#define RN_ERROR_LOCK_ERROR 9
 
-#define RNAPIRN_ERROR_INVALID_UTF8 10
+#define RN_ERROR_INVALID_UTF8 10
 
-#define RNAPIRN_ERROR_INVALID_ARGUMENT 11
+#define RN_ERROR_INVALID_ARGUMENT 11
 
-typedef struct RNAPIKeysInner RNAPIKeysInner;
+#define RN_ERROR_ENROLLMENT_TOKEN_INVALID 1006
 
-typedef struct RNAPITransportInner RNAPITransportInner;
+#define RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED 1010
 
-typedef struct RNAPIRnError {
+#define RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED 1011
+
+#define RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED 1012
+
+#define RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED 1013
+
+typedef struct KeysInner KeysInner;
+
+typedef struct TransportInner TransportInner;
+
+typedef struct RnError {
   int32_t code;
   const char *message;
-} RNAPIRnError;
+} RnError;
 
-typedef struct RNAPIRnDeviceKeystoreCaps {
+typedef struct RnDeviceKeystoreCaps {
   uint32_t version;
   uint32_t flags;
-} RNAPIRnDeviceKeystoreCaps;
+} RnDeviceKeystoreCaps;
 
-typedef struct RNAPIFfiKeysHandle {
-  struct RNAPIKeysInner *inner;
-} RNAPIFfiKeysHandle;
+typedef struct FfiKeysHandle {
+  struct KeysInner *inner;
+} FfiKeysHandle;
 
-typedef struct RNAPIFfiTransportHandle {
-  struct RNAPITransportInner *inner;
-} RNAPIFfiTransportHandle;
+typedef struct FfiTransportHandle {
+  struct TransportInner *inner;
+} FfiTransportHandle;
 
-void rn_free(uint8_t *_p, size_t _len);
+void rn_free(uint8_t *ptr, size_t len);
 
 void rn_string_free(const char *s);
 
 /**
- * Set local NodeInfo from a CBOR buffer.
- *
- * Returns 0 on success.
- * Returns 1 on null/invalid arguments.
- * Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
+ * Free the error message inside RnError and null the pointer
  */
-int32_t rn_keys_set_local_node_info(void *keys, const uint8_t *node_info_cbor, size_t len);
+void rn_error_free(struct RnError *err);
 
-int32_t rn_last_error(char *out, size_t out_len);
+/**
+ * Clear stored last error message (diagnostics helper)
+ */
+void rn_clear_error_history(void);
 
-void rn_set_log_level(int32_t level);
+/**
+ * Set local NodeInfo from a CBOR buffer.
+ */
+int32_t rn_set_log_level(int32_t level, struct RnError *err);
 
-int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
+/**
+ * Set local NodeInfo for the transport.
+ * Returns 0 on success, error code on failure.
+ */
+int32_t rn_transport_set_local_node_info(void *transport,
+                                         const uint8_t *node_info_cbor,
+                                         size_t len,
+                                         struct RnError *err);
 
-int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnError *err);
+int32_t rn_set_logger_context(const char *node_id, struct RnError *err);
 
-int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RnError *err);
 
-int32_t rn_keys_node_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RnError *err);
 
-int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+int32_t rn_keys_wipe_persistence(void *keys, struct RnError *err);
 
 int32_t rn_keys_get_keystore_caps(void *keys,
-                                  struct RNAPIRnDeviceKeystoreCaps *out_caps,
-                                  struct RNAPIRnError *err);
+                                  struct RnDeviceKeystoreCaps *out_caps,
+                                  struct RnError *err);
 
-int32_t rn_keys_flush_state(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_flush_state(void *keys, struct RnError *err);
 
-int32_t rn_keys_register_apple_device_keystore(void *keys,
-                                               const char *label,
-                                               struct RNAPIRnError *err);
+int32_t rn_keys_register_apple_device_keystore(void *keys, const char *label, struct RnError *err);
 
 int32_t rn_keys_register_linux_device_keystore(void *keys,
                                                const char *service,
                                                const char *account,
-                                               struct RNAPIRnError *err);
+                                               struct RnError *err);
 
 int32_t rn_keys_node_encrypt_with_envelope(void *keys,
                                            const uint8_t *data,
@@ -110,7 +127,7 @@ int32_t rn_keys_node_encrypt_with_envelope(void *keys,
                                            size_t profiles_count,
                                            uint8_t **out_eed_cbor,
                                            size_t *out_len,
-                                           struct RNAPIRnError *err);
+                                           struct RnError *err);
 
 int32_t rn_keys_mobile_encrypt_with_envelope(void *keys,
                                              const uint8_t *data,
@@ -122,30 +139,30 @@ int32_t rn_keys_mobile_encrypt_with_envelope(void *keys,
                                              size_t profiles_count,
                                              uint8_t **out_eed_cbor,
                                              size_t *out_len,
-                                             struct RNAPIRnError *err);
+                                             struct RnError *err);
 
 int32_t rn_keys_node_decrypt_envelope(void *keys,
                                       const uint8_t *eed_cbor,
                                       size_t eed_len,
                                       uint8_t **out_plain,
                                       size_t *out_len,
-                                      struct RNAPIRnError *err);
+                                      struct RnError *err);
 
 int32_t rn_keys_mobile_decrypt_envelope(void *keys,
                                         const uint8_t *eed_cbor,
                                         size_t eed_len,
                                         uint8_t **out_plain,
                                         size_t *out_len,
-                                        struct RNAPIRnError *err);
+                                        struct RnError *err);
 
 int32_t rn_keys_encrypt_local_data(void *keys,
                                    const uint8_t *data,
                                    size_t data_len,
                                    uint8_t **out_cipher,
                                    size_t *out_len,
-                                   struct RNAPIRnError *err);
+                                   struct RnError *err);
 
-int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RnError *err);
 
 /**
  * Get the user public key after mobile initialization
@@ -154,30 +171,29 @@ int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError 
 int32_t rn_keys_mobile_get_user_public_key(void *keys,
                                            uint8_t **out,
                                            size_t *out_len,
-                                           struct RNAPIRnError *err);
+                                           struct RnError *err);
 
 int32_t rn_keys_mobile_derive_user_profile_key(void *keys,
                                                const char *label,
                                                uint8_t **out_pk,
                                                size_t *out_len,
-                                               struct RNAPIRnError *err);
+                                               struct RnError *err);
 
 int32_t rn_keys_mobile_install_network_public_key(void *keys,
                                                   const uint8_t *network_public_key,
                                                   size_t len,
-                                                  struct RNAPIRnError *err);
+                                                  struct RnError *err);
 
 int32_t rn_keys_mobile_generate_network_data_key(void *keys,
                                                  uint8_t **out_pk,
                                                  size_t *out_len,
-                                                 struct RNAPIRnError *err);
+                                                 struct RnError *err);
 
 int32_t rn_keys_mobile_has_network_private_key(void *keys,
                                                const uint8_t *network_public_key,
                                                size_t network_public_key_len,
-                                               uint8_t **out_pk,
-                                               size_t *out_len,
-                                               struct RNAPIRnError *err);
+                                               int32_t *out_has_key,
+                                               struct RnError *err);
 
 int32_t rn_keys_mobile_create_network_key_message(void *keys,
                                                   const uint8_t *network_public_key,
@@ -186,19 +202,23 @@ int32_t rn_keys_mobile_create_network_key_message(void *keys,
                                                   size_t node_agreement_pk_len,
                                                   uint8_t **out_msg_cbor,
                                                   size_t *out_len,
-                                                  struct RNAPIRnError *err);
+                                                  struct RnError *err);
 
-int32_t rn_keys_node_install_network_key(void *keys,
-                                         const uint8_t *nkm_cbor,
-                                         size_t nkm_len,
-                                         struct RNAPIRnError *err);
+/**
+ * Get network public key by network ID for mobile key manager
+ */
+int32_t rn_keys_mobile_get_network_public_key_by_id(void *keys,
+                                                    const char *network_id,
+                                                    uint8_t **out_public_key,
+                                                    size_t *out_len,
+                                                    struct RnError *err);
 
 int32_t rn_keys_decrypt_local_data(void *keys,
                                    const uint8_t *encrypted,
                                    size_t enc_len,
                                    uint8_t **out_plain,
                                    size_t *out_len,
-                                   struct RNAPIRnError *err);
+                                   struct RnError *err);
 
 int32_t rn_keys_encrypt_message_for_mobile(void *keys,
                                            const uint8_t *message,
@@ -207,14 +227,14 @@ int32_t rn_keys_encrypt_message_for_mobile(void *keys,
                                            size_t pk_len,
                                            uint8_t **out_cipher,
                                            size_t *out_len,
-                                           struct RNAPIRnError *err);
+                                           struct RnError *err);
 
 int32_t rn_keys_decrypt_message_from_mobile(void *keys,
                                             const uint8_t *encrypted_message,
                                             size_t enc_len,
                                             uint8_t **out_plain,
                                             size_t *out_len,
-                                            struct RNAPIRnError *err);
+                                            struct RnError *err);
 
 /**
  * Encrypt a message from mobile to node using node's agreement public key
@@ -226,7 +246,7 @@ int32_t rn_keys_encrypt_message_for_node(void *keys,
                                          size_t pk_len,
                                          uint8_t **out_cipher,
                                          size_t *out_len,
-                                         struct RNAPIRnError *err);
+                                         struct RnError *err);
 
 /**
  * Decrypt a message from node on mobile using mobile's agreement private key
@@ -236,16 +256,7 @@ int32_t rn_keys_mobile_decrypt_message_from_node(void *keys,
                                                  size_t enc_len,
                                                  uint8_t **out_plain,
                                                  size_t *out_len,
-                                                 struct RNAPIRnError *err);
-
-int32_t rn_keys_encrypt_for_public_key(void *keys,
-                                       const uint8_t *data,
-                                       size_t data_len,
-                                       const uint8_t *recipient_public_key,
-                                       size_t pk_len,
-                                       uint8_t **out_eed_cbor,
-                                       size_t *out_len,
-                                       struct RNAPIRnError *err);
+                                                 struct RnError *err);
 
 int32_t rn_keys_encrypt_for_network(void *keys,
                                     const uint8_t *data,
@@ -254,155 +265,704 @@ int32_t rn_keys_encrypt_for_network(void *keys,
                                     size_t network_public_key_len,
                                     uint8_t **out_eed_cbor,
                                     size_t *out_len,
-                                    struct RNAPIRnError *err);
+                                    struct RnError *err);
 
 int32_t rn_keys_decrypt_network_data(void *keys,
                                      const uint8_t *eed_cbor,
                                      size_t eed_len,
                                      uint8_t **out_plain,
                                      size_t *out_len,
-                                     struct RNAPIRnError *err);
+                                     struct RnError *err);
 
-int32_t rn_discovery_new_with_multicast(void *keys,
+int32_t rn_discovery_new_with_multicast(const uint8_t *peer_info_cbor,
+                                        size_t peer_info_len,
                                         const uint8_t *options_cbor,
                                         size_t options_len,
                                         void **out_discovery,
-                                        struct RNAPIRnError *err);
+                                        struct RnError *err);
 
 void rn_discovery_free(void *discovery);
 
 int32_t rn_discovery_init(void *discovery,
                           const uint8_t *options_cbor,
                           size_t options_len,
-                          struct RNAPIRnError *err);
+                          struct RnError *err);
 
-int32_t rn_discovery_bind_events_to_transport(void *discovery,
-                                              void *transport,
-                                              struct RNAPIRnError *err);
+int32_t rn_discovery_bind_events(void *discovery, struct RnError *err);
 
-int32_t rn_discovery_start_announcing(void *discovery, struct RNAPIRnError *err);
+int32_t rn_discovery_start_announcing(void *discovery, struct RnError *err);
 
-int32_t rn_discovery_stop_announcing(void *discovery, struct RNAPIRnError *err);
+int32_t rn_discovery_stop_announcing(void *discovery, struct RnError *err);
 
-int32_t rn_discovery_shutdown(void *discovery, struct RNAPIRnError *err);
+int32_t rn_discovery_shutdown(void *discovery, struct RnError *err);
 
 int32_t rn_discovery_update_local_peer_info(void *discovery,
                                             const uint8_t *peer_info_cbor,
                                             size_t len,
-                                            struct RNAPIRnError *err);
+                                            struct RnError *err);
+
+int32_t rn_discovery_poll_discovered(void *discovery,
+                                     uint8_t **out_cbor,
+                                     size_t *out_len,
+                                     struct RnError *err);
+
+int32_t rn_discovery_poll_updated(void *discovery,
+                                  uint8_t **out_cbor,
+                                  size_t *out_len,
+                                  struct RnError *err);
+
+int32_t rn_discovery_poll_lost(void *discovery,
+                               uint8_t **out_cbor,
+                               size_t *out_len,
+                               struct RnError *err);
 
 void rn_keys_free(void *keys);
 
 /**
  * C-conventional: writes handle to out param; returns 0 on success, non-zero on error.
  */
-int32_t rn_keys_new(void **out_keys, struct RNAPIRnError *err);
+int32_t rn_keys_new(void **out_keys, struct RnError *err);
 
 /**
  * Initialize FFI instance as mobile manager
  * Returns error if already initialized with different type
  */
-int32_t rn_keys_init_as_mobile(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_init_as_mobile(void *keys, struct RnError *err);
 
 /**
  * Initialize FFI instance as node manager
  * Returns error if already initialized with different type
  */
-int32_t rn_keys_init_as_node(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_init_as_node(void *keys, struct RnError *err);
 
 int32_t rn_keys_node_get_public_key(void *keys,
                                     uint8_t **out,
                                     size_t *out_len,
-                                    struct RNAPIRnError *err);
+                                    struct RnError *err);
 
 int32_t rn_keys_node_get_agreement_public_key(void *keys,
                                               uint8_t **out,
                                               size_t *out_len,
-                                              struct RNAPIRnError *err);
+                                              struct RnError *err);
 
 int32_t rn_keys_node_get_node_id(void *keys,
-                                 char **out_str,
-                                 size_t *out_len,
-                                 struct RNAPIRnError *err);
+                                 char **out_id,
+                                 int32_t *out_has_id,
+                                 struct RnError *err);
 
 int32_t rn_keys_node_generate_csr(void *keys,
                                   uint8_t **out_st_cbor,
                                   size_t *out_len,
-                                  struct RNAPIRnError *err);
+                                  struct RnError *err);
 
 int32_t rn_keys_mobile_process_setup_token(void *keys,
                                            const uint8_t *st_cbor,
                                            size_t st_len,
                                            uint8_t **out_ncm_cbor,
                                            size_t *out_len,
-                                           struct RNAPIRnError *err);
+                                           struct RnError *err);
 
-int32_t rn_keys_node_install_certificate(void *keys,
-                                         const uint8_t *ncm_cbor,
-                                         size_t ncm_len,
-                                         struct RNAPIRnError *err);
+/**
+ * Convert enrollment response to certificate message
+ */
+int32_t rn_keys_mobile_from_enroll_response(void *mobile,
+                                            const uint8_t *response,
+                                            size_t response_len,
+                                            uint8_t **out_cert_message,
+                                            size_t *out_len,
+                                            struct RnError *err);
+
+/**
+ * Convert renewal response to certificate message
+ */
+int32_t rn_keys_mobile_from_renew_response(void *mobile,
+                                           const uint8_t *response,
+                                           size_t response_len,
+                                           uint8_t **out_cert_message,
+                                           size_t *out_len,
+                                           struct RnError *err);
 
 int32_t rn_transport_new_with_keys(void *keys,
+                                   const uint8_t *node_info_cbor,
+                                   size_t node_info_len,
                                    const uint8_t *options_cbor,
                                    size_t options_len,
                                    void **out_transport,
-                                   struct RNAPIRnError *err);
+                                   struct RnError *err);
 
 void rn_transport_free(void *transport);
 
-int32_t rn_transport_start(void *transport, struct RNAPIRnError *err);
+int32_t rn_transport_start(void *transport, struct RnError *err);
+
+int32_t rn_transport_poll_peer_connected(void *transport,
+                                         uint8_t **out_cbor,
+                                         size_t *out_len,
+                                         struct RnError *err);
+
+int32_t rn_transport_poll_peer_disconnected(void *transport,
+                                            uint8_t **out_cbor,
+                                            size_t *out_len,
+                                            struct RnError *err);
+
+int32_t rn_transport_poll_request(void *transport,
+                                  uint8_t **out_cbor,
+                                  size_t *out_len,
+                                  struct RnError *err);
 
 int32_t rn_transport_poll_event(void *transport,
-                                uint8_t **out_event,
+                                uint8_t **out_cbor,
                                 size_t *out_len,
-                                struct RNAPIRnError *err);
+                                struct RnError *err);
+
+int32_t rn_transport_poll_response(void *transport,
+                                   uint8_t **out_cbor,
+                                   size_t *out_len,
+                                   struct RnError *err);
 
 int32_t rn_transport_connect_peer(void *transport,
                                   const uint8_t *peer_info_cbor,
                                   size_t len,
-                                  struct RNAPIRnError *err);
+                                  struct RnError *err);
 
 int32_t rn_transport_disconnect_peer(void *transport,
                                      const char *peer_node_id,
-                                     struct RNAPIRnError *err);
+                                     struct RnError *err);
 
 int32_t rn_transport_is_connected(void *transport,
                                   const char *peer_node_id,
                                   bool *out_connected,
-                                  struct RNAPIRnError *err);
+                                  struct RnError *err);
 
 int32_t rn_transport_update_local_node_info(void *transport,
                                             const uint8_t *node_info_cbor,
                                             size_t len,
-                                            struct RNAPIRnError *err);
+                                            struct RnError *err);
 
 int32_t rn_transport_request(void *transport,
                              const uint8_t *request_cbor,
                              size_t request_len,
-                             struct RNAPIRnError *err);
+                             struct RnError *err);
 
 int32_t rn_transport_publish(void *transport,
                              const uint8_t *publish_cbor,
                              size_t publish_len,
-                             struct RNAPIRnError *err);
+                             struct RnError *err);
 
 int32_t rn_transport_complete_request(void *transport,
                                       const uint8_t *complete_cbor,
                                       size_t complete_len,
-                                      struct RNAPIRnError *err);
+                                      struct RnError *err);
 
-int32_t rn_transport_stop(void *transport, struct RNAPIRnError *err);
+int32_t rn_transport_stop(void *transport, struct RnError *err);
 
 int32_t rn_transport_local_addr(void *transport,
                                 char **out_str,
                                 size_t *out_len,
-                                struct RNAPIRnError *err);
+                                struct RnError *err);
 
 int32_t rn_keys_ensure_symmetric_key(void *keys,
                                      const char *key_name,
                                      uint8_t **out_key,
                                      size_t *out_len,
-                                     struct RNAPIRnError *err);
+                                     struct RnError *err);
+
+/**
+ * Check if NodeKeyManager has keys (new API)
+ */
+int32_t rn_keys_node_has_keys(void *keys, int32_t *out_has_keys, struct RnError *err);
+
+/**
+ * Generate keys for NodeKeyManager (new API)
+ */
+int32_t rn_keys_node_generate_keys(void *keys, struct RnError *err);
+
+/**
+ * Create new shared CA Node (consistent API)
+ */
+int32_t rn_keys_ca_node_new_shared(void **out_shared_ca_node, struct RnError *err);
+
+/**
+ * Free shared CA Node reference
+ */
+void rn_keys_ca_node_free_shared(void *shared_ca_node);
+
+/**
+ * Add admin SKI to shared CA Node reference
+ */
+int32_t rn_keys_ca_node_add_admin_ski(void *shared_ca_node, const char *ski, struct RnError *err);
+
+/**
+ * Configure enrollment authority (new API)
+ */
+int32_t rn_keys_ca_node_configure_enrollment_authority(void *shared_ca_node,
+                                                       const uint8_t *ea_public_keys,
+                                                       size_t keys_len,
+                                                       struct RnError *err);
+
+/**
+ * Complete CA Node setup with internal private key management (SECURE)
+ */
+int32_t rn_keys_ca_node_setup_complete(void *shared_ca_node,
+                                       const char *root_ca_subject,
+                                       const char *issuing_ca_subject,
+                                       uint32_t validity_days,
+                                       uint64_t issuing_ca_serial,
+                                       const uint8_t *ea_public_keys,
+                                       size_t ea_keys_len,
+                                       const char *network_id,
+                                       struct RnError *err);
+
+/**
+ * Create EA key pair (private key stays internal)
+ */
+int32_t rn_keys_ca_create_ea_key_pair(void **ea_key_handle, struct RnError *err);
+
+/**
+ * Get EA public key (only public key exposed) in CBOR format
+ */
+int32_t rn_keys_ca_get_ea_public_key(void *ea_key_handle,
+                                     uint8_t **public_key,
+                                     size_t *public_key_len,
+                                     struct RnError *err);
+
+/**
+ * Generate enrollment token (uses internal private key)
+ */
+int32_t rn_keys_ca_generate_enrollment_token(void *ea_key_handle,
+                                             const char *token_id,
+                                             const char *network_id,
+                                             const char *subject,
+                                             uint64_t valid_from,
+                                             uint64_t valid_until,
+                                             const uint8_t *nonce,
+                                             size_t nonce_len,
+                                             const char *const *capabilities,
+                                             size_t capabilities_len,
+                                             uint8_t **token_cbor,
+                                             size_t *token_len,
+                                             struct RnError *err);
+
+/**
+ * Free EA key pair
+ */
+void rn_keys_ca_free_ea_key_pair(void *ea_key_handle);
+
+/**
+ * Get Root CA certificate from CA Node (public certificate only)
+ */
+int32_t rn_keys_ca_node_get_root_ca_certificate(void *shared_ca_node,
+                                                uint8_t **certificate,
+                                                size_t *certificate_len,
+                                                struct RnError *err);
+
+/**
+ * Get Issuing CA certificate from CA Node (public certificate only)
+ */
+int32_t rn_keys_ca_node_get_issuing_ca_certificate(void *shared_ca_node,
+                                                   uint8_t **certificate,
+                                                   size_t *certificate_len,
+                                                   struct RnError *err);
+
+/**
+ * Handle enrollment request (new API)
+ */
+int32_t rn_keys_ca_node_handle_enroll(void *shared_ca_node,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      const char *remote_addr,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RnError *err);
+
+/**
+ * Handle renewal request (new API)
+ */
+int32_t rn_keys_ca_node_handle_renew(void *shared_ca_node,
+                                     const uint8_t *request,
+                                     size_t request_len,
+                                     const uint8_t *peer_cert,
+                                     size_t cert_len,
+                                     uint8_t **out_response,
+                                     size_t *out_len,
+                                     struct RnError *err);
+
+/**
+ * Handle revocation request (new API)
+ */
+int32_t rn_keys_ca_node_handle_revoke(void *shared_ca_node,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      const char *admin_ski,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RnError *err);
+
+/**
+ * Handle chain request (new API)
+ */
+int32_t rn_keys_ca_node_handle_chain(void *shared_ca_node,
+                                     const char *network_id,
+                                     uint8_t **out_response,
+                                     size_t *out_len,
+                                     struct RnError *err);
+
+/**
+ * Handle status request (new API)
+ */
+int32_t rn_keys_ca_node_handle_status(void *shared_ca_node,
+                                      const char *network_id,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RnError *err);
+
+/**
+ * Handle CRL request (new API)
+ */
+int32_t rn_keys_ca_node_handle_crl(void *shared_ca_node,
+                                   const char *network_id,
+                                   uint8_t **out_response,
+                                   size_t *out_len,
+                                   struct RnError *err);
+
+/**
+ * Create Root CA certificate
+ */
+int32_t rn_keys_ca_create_root_ca(const char *subject, void **out_ca, struct RnError *err);
+
+/**
+ * Create Issuing CA certificate (signed by Root CA)
+ */
+int32_t rn_keys_ca_create_issuing_ca(void *root_ca,
+                                     const char *subject,
+                                     uint32_t validity_days,
+                                     uint64_t serial,
+                                     void **out_ca,
+                                     struct RnError *err);
+
+/**
+ * Get CA certificate DER bytes
+ */
+int32_t rn_keys_ca_get_certificate_der(void *ca,
+                                       uint8_t **out_cert,
+                                       size_t *out_len,
+                                       struct RnError *err);
+
+/**
+ * Get CA certificate subject
+ */
+int32_t rn_keys_ca_get_certificate_subject(void *ca, char **out_subject, struct RnError *err);
+
+/**
+ * Free CA resources
+ * Free CA resources
+ */
+void rn_keys_ca_free(void *ca);
+
+/**
+ * Generate enrollment token
+ */
+int32_t rn_keys_enrollment_token_generate(const uint8_t *ea_key,
+                                          size_t key_len,
+                                          const char *token_id,
+                                          const char *network_id,
+                                          const char *subject,
+                                          uint64_t not_before,
+                                          uint64_t expires_at,
+                                          const uint8_t *nonce,
+                                          size_t nonce_len,
+                                          const uint8_t *permissions,
+                                          size_t permissions_len,
+                                          uint8_t **out_token,
+                                          size_t *out_len,
+                                          struct RnError *err);
+
+/**
+ * Validate enrollment token
+ */
+int32_t rn_keys_enrollment_token_validate(const uint8_t *token,
+                                          size_t token_len,
+                                          const uint8_t *ea_public_key,
+                                          size_t key_len,
+                                          int32_t *out_valid,
+                                          struct RnError *err);
+
+/**
+ * Get QUIC certificate configuration
+ */
+int32_t rn_keys_node_get_quic_certificate_config(void *keys,
+                                                 uint8_t **out_config,
+                                                 size_t *out_len,
+                                                 struct RnError *err);
+
+/**
+ * Get node certificate
+ */
+int32_t rn_keys_node_get_node_certificate(void *keys,
+                                          uint8_t **out_cert,
+                                          size_t *out_len,
+                                          struct RnError *err);
+
+/**
+ * Extract certificate SKI
+ */
+int32_t rn_keys_certificate_extract_ski(const uint8_t *cert,
+                                        size_t cert_len,
+                                        char **out_ski,
+                                        struct RnError *err);
+
+/**
+ * Get certificate serial
+ */
+int32_t rn_keys_certificate_get_serial(const uint8_t *cert,
+                                       size_t cert_len,
+                                       char **out_serial,
+                                       struct RnError *err);
+
+/**
+ * Create new CA Server (new API)
+ */
+int32_t rn_transport_ca_server_new(const uint8_t *config,
+                                   size_t _config_len,
+                                   void *shared_ca_node,
+                                   void **out_server,
+                                   struct RnError *err);
+
+/**
+ * Free CA Server (new API)
+ */
+void rn_transport_ca_server_free(void *server);
+
+/**
+ * Configure admin SKIs (new API)
+ */
+int32_t rn_transport_ca_server_configure_admin_skis(void *server,
+                                                    const uint8_t *admin_skis,
+                                                    size_t skis_len,
+                                                    struct RnError *err);
+
+/**
+ * Start CA Server (new API)
+ */
+int32_t rn_transport_ca_server_start(void *server, struct RnError *err);
+
+/**
+ * Stop CA Server (new API)
+ */
+int32_t rn_transport_ca_server_stop(void *server, struct RnError *err);
+
+/**
+ * Get bootstrap address (new API)
+ */
+int32_t rn_transport_ca_server_get_bootstrap_addr(void *server,
+                                                  char **out_addr,
+                                                  struct RnError *err);
+
+/**
+ * Get authenticated address (new API)
+ */
+int32_t rn_transport_ca_server_get_authenticated_addr(void *server,
+                                                      char **out_addr,
+                                                      struct RnError *err);
+
+/**
+ * Derive user profile key (new API)
+ */
+int32_t rn_keys_node_derive_user_profile_key(void *keys,
+                                             const char *label,
+                                             uint8_t **out_public_key,
+                                             size_t *out_len,
+                                             struct RnError *err);
+
+/**
+ * Decrypt envelope data using profile key (new API)
+ */
+int32_t rn_keys_node_decrypt_with_profile(void *keys,
+                                          const uint8_t *envelope_data,
+                                          size_t envelope_len,
+                                          const char *profile_id,
+                                          uint8_t **out_data,
+                                          size_t *out_len,
+                                          struct RnError *err);
+
+/**
+ * Install profile public key (new API)
+ */
+int32_t rn_keys_node_install_profile_public_key(void *keys,
+                                                const uint8_t *public_key,
+                                                size_t public_key_len,
+                                                struct RnError *err);
+
+/**
+ * Get profile public key by label (new API)
+ */
+int32_t rn_keys_node_get_profile_public_key_by_label(void *keys,
+                                                     const char *label,
+                                                     uint8_t **out_public_key,
+                                                     size_t *out_public_key_len,
+                                                     int32_t *out_has_key,
+                                                     struct RnError *err);
+
+/**
+ * Get certificate status
+ */
+int32_t rn_keys_node_get_certificate_status(void *keys, int32_t *out_status, struct RnError *err);
+
+/**
+ * Get certificate serial number
+ */
+int32_t rn_keys_node_get_certificate_serial(void *keys, char **out_serial, struct RnError *err);
+
+/**
+ * Validate peer certificate
+ */
+int32_t rn_keys_node_validate_peer_certificate(void *keys,
+                                               const uint8_t *peer_cert,
+                                               size_t cert_len,
+                                               struct RnError *err);
+
+/**
+ * Install network key (v2 API)
+ */
+int32_t rn_keys_node_install_network_key(void *keys,
+                                         const uint8_t *network_key_message,
+                                         size_t message_len,
+                                         struct RnError *err);
+
+/**
+ * Get network agreement
+ */
+int32_t rn_keys_node_get_network_agreement(void *keys,
+                                           const uint8_t *network_public_key,
+                                           size_t key_len,
+                                           uint8_t **out_agreement,
+                                           size_t *out_len,
+                                           struct RnError *err);
+
+/**
+ * Check if node has network private key
+ */
+int32_t rn_keys_node_has_network_private_key(void *keys,
+                                             const uint8_t *network_public_key,
+                                             size_t key_len,
+                                             int32_t *out_has_key,
+                                             struct RnError *err);
+
+/**
+ * Get network public key by network ID for node key manager
+ */
+int32_t rn_keys_node_get_network_public_key_by_id(void *keys,
+                                                  const char *network_id,
+                                                  uint8_t **out_public_key,
+                                                  size_t *out_len,
+                                                  struct RnError *err);
+
+/**
+ * Create new CA Client (new API)
+ */
+int32_t rn_transport_ca_client_new_with_config(const uint8_t *config_cbor,
+                                               size_t config_len,
+                                               void *node_keys,
+                                               void **out_client,
+                                               struct RnError *err);
+
+/**
+ * Free CA Client (new API)
+ */
+void rn_transport_ca_client_free(void *client);
+
+/**
+ * CA Client enroll (new API)
+ */
+int32_t rn_transport_ca_client_enroll(void *client,
+                                      const char *bootstrap_addr,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RnError *err);
+
+/**
+ * CA Client renew (new API)
+ */
+int32_t rn_transport_ca_client_renew(void *client,
+                                     const char *authenticated_addr,
+                                     const uint8_t *request,
+                                     size_t request_len,
+                                     uint8_t **out_response,
+                                     size_t *out_len,
+                                     struct RnError *err);
+
+/**
+ * CA Client revoke (new API)
+ */
+int32_t rn_transport_ca_client_revoke(void *client,
+                                      const char *authenticated_addr,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RnError *err);
+
+/**
+ * CA Client get chain (new API)
+ */
+int32_t rn_transport_ca_client_get_chain(void *client,
+                                         const char *bootstrap_addr,
+                                         const char *network_id,
+                                         uint8_t **out_response,
+                                         size_t *out_len,
+                                         struct RnError *err);
+
+/**
+ * CA Client get status (new API)
+ */
+int32_t rn_transport_ca_client_get_status(void *client,
+                                          const char *authenticated_addr,
+                                          const char *network_id,
+                                          uint8_t **out_response,
+                                          size_t *out_len,
+                                          struct RnError *err);
+
+/**
+ * CA Client get CRL (new API)
+ */
+int32_t rn_transport_ca_client_get_crl(void *client,
+                                       const char *authenticated_addr,
+                                       const char *network_id,
+                                       uint8_t **out_response,
+                                       size_t *out_len,
+                                       struct RnError *err);
+
+/**
+ * Install certificate for node key manager
+ */
+int32_t rn_keys_node_install_certificate(void *keys,
+                                         const uint8_t *certificate_data,
+                                         size_t cert_len,
+                                         struct RnError *err);
+
+/**
+ * Get compact ID for profile key
+ */
+int32_t rn_keys_get_compact_id(const uint8_t *public_key,
+                               size_t key_len,
+                               char **out_id,
+                               struct RnError *err);
+
+/**
+ * Revoke enrollment token
+ */
+int32_t rn_keys_ca_node_revoke_token(void *shared_ca_node,
+                                     const char *token_id,
+                                     struct RnError *err);
+
+/**
+ * Generate CRL-lite
+ */
+int32_t rn_keys_ca_node_generate_crl_lite(void *shared_ca_node,
+                                          uint8_t **out_crl,
+                                          size_t *out_len,
+                                          struct RnError *err);
 
 #endif /* RUNAR_FFI_H */
 

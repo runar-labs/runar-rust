@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::LevelFilter;
-use runar_macros_common::log_info;
+use runar_logging::log_info;
 use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;

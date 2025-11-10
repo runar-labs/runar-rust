@@ -24,5 +24,5 @@
 //     .with_logging_config(logging);
 // ```
 
-// Re-export configuration types from runar_common::logging
-pub use runar_common::logging::{ComponentKey, LogLevel, LoggingConfig};
+// Re-export configuration types from runar_logging
+pub use runar_logging::{LogLevel, LoggingConfig};

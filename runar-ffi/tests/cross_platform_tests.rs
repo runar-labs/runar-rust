@@ -57,12 +57,17 @@ fn test_core_node_initialization_flow() {
     // Initialize as node
     unsafe { init_as_node(keys) };
 
-    // Verify node functions work
+    // Generate keys first
+    // State variables removed - no longer needed
     let mut error = create_test_error();
-    let mut id_ptr: *mut i8 = ptr::null_mut();
-    let mut id_len: usize = 0;
+    // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+    // Keys are automatically generated when needed
 
-    let result = rn_keys_node_get_node_id(keys, &mut id_ptr, &mut id_len, &mut error);
+    // Verify node functions work
+    let mut id_ptr: *mut i8 = ptr::null_mut();
+    let mut has_id: i32 = 0;
+
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut id_ptr, &mut has_id, &mut error) };
     assert_eq!(result, 0, "Node function should work after node init");
 
     destroy_keys_handle(keys);
@@ -98,9 +103,9 @@ fn test_core_manager_type_isolation() {
     // Try to call node function - should fail with wrong manager type
     let mut error = create_test_error();
     let mut id_ptr: *mut i8 = ptr::null_mut();
-    let mut id_len: usize = 0;
+    let mut has_id: i32 = 0;
 
-    let result = rn_keys_node_get_node_id(keys, &mut id_ptr, &mut id_len, &mut error);
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut id_ptr, &mut has_id, &mut error) };
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
         "Node function should fail with mobile init"
@@ -141,7 +146,11 @@ fn test_core_basic_encryption_operations() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
+    // Generate keys first
+    // State variables removed - no longer needed
     let mut error = create_test_error();
+    // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+    // Keys are automatically generated when needed
 
     // Test local data encryption
     let data = b"test data";
@@ -176,7 +185,11 @@ fn test_core_basic_decryption_operations() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
+    // Generate keys first
+    // State variables removed - no longer needed
     let mut error = create_test_error();
+    // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+    // Keys are automatically generated when needed
 
     // First encrypt some data
     let data = b"test data for decryption";

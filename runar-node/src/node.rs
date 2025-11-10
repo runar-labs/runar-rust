@@ -7,11 +7,11 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::{PathTrie, TopicPath};
 use runar_keys::{
     mobile::EnvelopeEncryptedData, EnvelopeCrypto, NodeKeyManager, Result as KeyResult,
 };
+use runar_logging::{Component, Logger};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
@@ -40,7 +40,7 @@ use tokio::{
 use uuid::Uuid;
 
 use dashmap::DashMap;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
@@ -65,7 +65,7 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
         keys_manager.decrypt_envelope_data(env)
     }
 
-    fn has_network_private_key(&self, network_public_key: &[u8]) -> KeyResult<Vec<u8>> {
+    fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
         let keys_manager = self.0.read().unwrap();
         keys_manager.has_network_private_key(network_public_key)
     }
@@ -80,7 +80,7 @@ pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
 type ServiceTask = (TopicPath, JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
-use runar_common::logging::LoggingConfig;
+use runar_logging::LoggingConfig;
 
 use crate::services::keys_service::KeysService;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
@@ -203,8 +203,7 @@ impl NodeConfig {
     /// use runar_node::NodeConfig;
     /// use std::sync::{Arc, RwLock};
     /// use runar_keys::NodeKeyManager;
-    /// use runar_common::logging::Logger;
-    /// use runar_common::logging::Component;
+    /// use runar_logging::{Logger, Component};
     ///
     /// // Basic configuration
     /// let config = NodeConfig::new("my-node");
@@ -300,7 +299,7 @@ impl NodeConfig {
     ///
     /// ```rust
     /// use runar_node::NodeConfig;
-    /// use runar_common::logging::LoggingConfig;
+    /// use runar_logging::LoggingConfig;
     ///
     /// let config = NodeConfig::new("my-node")
     ///     .with_logging_config(LoggingConfig::default_info());
@@ -374,8 +373,7 @@ impl NodeConfig {
     /// use runar_node::NodeConfig;
     /// use std::sync::{Arc, RwLock};
     /// use runar_keys::NodeKeyManager;
-    /// use runar_common::logging::Logger;
-    /// use runar_common::logging::Component;
+    /// use runar_logging::{Logger, Component};
     ///
     /// let logger = Arc::new(Logger::new_root(Component::Keys));
     /// let node_keys_manager = NodeKeyManager::new(logger).expect("Failed to create key manager");
@@ -458,7 +456,7 @@ impl std::fmt::Display for NodeConfig {
 /// async fn example_usage() -> anyhow::Result<()> {
 ///     // Note: This example shows the concept but would need proper
 ///     // key manager state to actually create a Node instance.
-///     
+///
 ///     // let config = NodeConfig::new("my-node", "my-network");
 ///     // let  node = Node::new(config).await?;
 ///     //
@@ -470,7 +468,7 @@ impl std::fmt::Display for NodeConfig {
 ///     //
 ///     // Make requests (note: this would require the service to have action handlers)
 ///     // let result: String = node.request("my-service/action", None).await?;
-///     
+///
 ///     Ok(())
 /// }
 /// ```
@@ -602,12 +600,12 @@ impl Node {
     /// async fn example_usage() -> anyhow::Result<()> {
     ///     // Note: This example shows the concept but would need proper
     ///     // key manager state to actually create a Node instance.
-    ///     
+    ///
     ///     // let config = NodeConfig::new("my-node", "my-network");
     ///     // let _node = Node::new(config).await?;
     ///     //
     ///     // Node is ready but services aren't started yet
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -645,9 +643,11 @@ impl Node {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Failed to load node credentials."))?;
 
-        let node_public_key = keys_manager.read().unwrap().get_node_public_key();
+        let Some(node_public_key) = keys_manager.read().unwrap().get_node_public_key() else {
+            return Err(anyhow::anyhow!("Node public key not available"));
+        };
         let node_id = compact_id(&node_public_key);
-        logger.set_node_id(node_id.clone());
+        logger.set_context(node_id.clone());
 
         log_info!(logger, "Successfully loaded existing node credentials.");
 
@@ -760,7 +760,7 @@ impl Node {
     /// async fn example_usage() -> anyhow::Result<()> {
     ///     // Note: This example shows the concept but would need proper
     ///     // key manager state to actually create a Node instance.
-    ///     
+    ///
     ///     // let mut config = NodeConfig::new("my-node", "my-network");
     ///     // let  node = Node::new(config).await?;
     ///     //
@@ -770,7 +770,7 @@ impl Node {
     ///     //
     ///     // Start the node to start all services
     ///     // node.start().await?;
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -942,17 +942,17 @@ impl Node {
     ///     // Note: This example shows the concept but would need a running node
     ///     // with services to actually work. The on() method is typically used
     ///     // after the node is started and services are running.
-    ///     
+    ///
     ///     // Wait for an event with default 5-second timeout
     ///     // let handle = node.on("my-service/event", None);
-    ///     
+    ///
     ///     // Wait for the event
     ///     // match handle.await? {
     ///     //     Ok(Some(data)) => println!("Received event: {data:?}"),
     ///     //     Ok(None) => println!("Channel closed"),
     ///     //     Err(e) => println!("Error: {e}"),
     ///     // }
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -1069,7 +1069,7 @@ impl Node {
     /// async fn example_usage() -> anyhow::Result<()> {
     ///     // Note: This example shows the concept but would need proper
     ///     // key manager state to actually create a Node instance.
-    ///     
+    ///
     ///     // let mut config = NodeConfig::new("my-node", "my-network");
     ///     // let  node = Node::new(config).await?;
     ///     //
@@ -1080,7 +1080,7 @@ impl Node {
     ///     // node.start().await?;
     ///     //
     ///     // Node is now running and ready to handle requests
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -1609,7 +1609,8 @@ impl Node {
                     .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
                     .with_request_callback(request_callback)
-                    .with_event_callback(event_callback);
+                    .with_event_callback(event_callback)
+                    .with_key_manager(self.keys_manager.clone());
 
                 let transport = QuicTransport::new(transport_options)
                     .map_err(|e| anyhow!("Failed to create QUIC transport: {e}"))?;
@@ -1704,7 +1705,7 @@ impl Node {
                 let discovery = MulticastDiscovery::new(
                     local_peer_info,
                     discovery_options.unwrap_or_default(),
-                    self.logger.with_component(Component::NetworkDiscovery),
+                    Arc::new(self.logger.with_component(Component::NetworkDiscovery)),
                 )
                 .await?;
                 Ok(Arc::new(discovery))
@@ -1863,7 +1864,10 @@ impl Node {
             .unwrap()
             .get_network_public_key_by_id(&network_id)?;
 
-        match self.local_request(topic_path.as_str(), params_option).await {
+        match self
+            .local_request(topic_path.as_str(), params_option, None)
+            .await
+        {
             Ok(response) => {
                 log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=msg.payload.correlation_id);
 
@@ -2082,6 +2086,7 @@ impl Node {
         &self,
         path: impl Into<String>,
         payload: Option<ArcValue>,
+        options: Option<RequestOptions>,
     ) -> Result<ArcValue> {
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
@@ -2099,9 +2104,28 @@ impl Node {
         {
             log_debug!(self.logger, "Executing local handler for: {topic_path}");
 
+            let profile_public_keys = options
+                .map(|o| o.profile_public_keys)
+                .unwrap_or_default()
+                .unwrap_or_default();
+
+            let mut metadata: HashMap<String, ArcValue> = HashMap::new();
+            metadata.insert(
+                "node_id".to_string(),
+                ArcValue::new_primitive(self.node_id.clone()),
+            );
+            metadata.insert(
+                "profile_public_keys".to_string(),
+                ArcValue::new_list(profile_public_keys),
+            );
+
             // Create request context
-            let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
+            let mut context = RequestContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                metadata,
+                self.logger.clone(),
+            );
 
             // Extract parameters using the original registration path
             if let Ok(params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2188,10 +2212,23 @@ impl Node {
                 .unwrap_or_default()
                 .unwrap_or_default();
 
+            let mut metadata: HashMap<String, ArcValue> = HashMap::new();
+            metadata.insert(
+                "node_id".to_string(),
+                ArcValue::new_primitive(self.node_id.clone()),
+            );
+            metadata.insert(
+                "profile_public_keys".to_string(),
+                ArcValue::new_list(profile_public_keys),
+            );
+
             // Create request context
-            let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                    .with_user_profile_public_keys(profile_public_keys);
+            let mut context = RequestContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                metadata,
+                self.logger.clone(),
+            );
 
             // Extract parameters using the original registration path
             if let Ok(path_params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2249,10 +2286,23 @@ impl Node {
                 .unwrap_or_default()
                 .unwrap_or_default();
 
+            let mut metadata: HashMap<String, ArcValue> = HashMap::new();
+            metadata.insert(
+                "node_id".to_string(),
+                ArcValue::new_primitive(self.node_id.clone()),
+            );
+            metadata.insert(
+                "profile_public_keys".to_string(),
+                ArcValue::new_list(profile_public_keys),
+            );
+
             // Create request context with profile public keys
-            let context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                    .with_user_profile_public_keys(profile_public_keys);
+            let context = RequestContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                metadata,
+                self.logger.clone(),
+            );
 
             // Apply load balancing strategy to select a handler
             let load_balancer = self.load_balancer.read().await;
@@ -2936,7 +2986,7 @@ impl Node {
     pub async fn collect_local_service_capabilities(&self) -> Result<NodeMetadata> {
         let services_map = self
             .service_registry
-            .get_all_service_metadata(false)
+            .get_all_service_metadata(false, false)
             .await?;
         let services: Vec<ServiceMetadata> = services_map.values().cloned().collect();
         let subscriptions = self.service_registry.get_all_subscriptions(false).await?;
@@ -3114,7 +3164,7 @@ impl NodeDelegate for Node {
         // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
         let topic_path = TopicPath::new(topic, &self.network_id)
             .map_err(|e| anyhow!(
-                "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'", 
+                "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'",
                 network_id=self.network_id
             ))?;
 
@@ -3374,9 +3424,10 @@ impl RegistryDelegate for Node {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
+        include_remote_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
         self.service_registry
-            .get_all_service_metadata(include_internal_services)
+            .get_all_service_metadata(include_internal_services, include_remote_services)
             .await
     }
 

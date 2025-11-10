@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
+use runar_logging::{Component, Logger};
 use runar_serializer::traits::{
     EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver, SerializationContext,
 };
@@ -35,14 +35,14 @@ fn build_test_context() -> Result<TestContext> {
     let mut mobile_network_master = MobileKeyManager::new(logger.clone())?;
     let network_public_key = mobile_network_master.generate_network_data_key()?;
     let network_id = runar_common::compact_ids::compact_id(&network_public_key);
-    let network_pub = mobile_network_master.has_network_private_key(&network_public_key)?;
 
     let mut user_mobile = MobileKeyManager::new(logger.clone())?;
     user_mobile.initialize_user_root_key()?;
     let profile_pk = user_mobile.derive_user_profile_key("user")?;
-    user_mobile.install_network_public_key(&network_pub)?;
+    user_mobile.install_network_public_key(&network_public_key)?;
 
     let mut node_keys = NodeKeyManager::new(logger.clone())?;
+    node_keys.generate_keys()?;
     let token = node_keys.generate_csr()?;
     let nk_msg = mobile_network_master
         .create_network_key_message(&network_public_key, &token.node_agreement_public_key)?;
@@ -56,7 +56,7 @@ fn build_test_context() -> Result<TestContext> {
             "system".to_string(),
             LabelKeyInfo {
                 profile_public_keys: vec![profile_pk.clone()],
-                network_public_key: Some(network_pub.clone()),
+                network_public_key: Some(network_public_key.clone()),
             },
         )]),
     }));

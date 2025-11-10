@@ -23,7 +23,7 @@ Quick start
 -----------
 
 ```rust
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, CertificateRequest};
 use std::sync::Arc;
 

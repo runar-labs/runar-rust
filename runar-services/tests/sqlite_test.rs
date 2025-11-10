@@ -3,31 +3,10 @@
 // This test demonstrates how to use the service and action macros
 // to create a simple service with actions.
 
-use std::collections::HashMap;
-
 use runar_services::sqlite::{
     ColumnDefinition, DataType, Params, Schema, SqlQuery, SqliteConfig, SqliteService,
     TableDefinition, Value,
 };
-use serde::{Deserialize, Serialize}; // For User and MyData structs
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct User {
-    id: Option<i64>,
-    name: String,
-    age: i32,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-struct MyData {
-    id: i32,
-    text_field: String,
-    number_field: i32,
-    boolean_field: bool,
-    float_field: f64,
-    vector_field: Vec<i32>,
-    map_field: HashMap<String, String>,
-}
 
 // Helper struct to ensure test database is cleaned up
 struct TestDbGuard {
@@ -58,7 +37,7 @@ impl Drop for TestDbGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runar_common::logging::LoggingConfig;
+    use runar_logging::LoggingConfig;
     use runar_node::config::LogLevel;
     use runar_node::Node;
     use runar_serializer::ArcValue;

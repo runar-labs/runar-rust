@@ -1,8 +1,11 @@
 ---
-description: 
-globs: *.rs
-alwaysApply: false
+alwaysApply: true
 ---
+
+Implement as per design 100%. no mocks, no stubs, no workarounds, no simplifications no hacks. stick to the deisgn 100% - no guesses, no assumnptions. read the code line by line to build a proper current undertnding -  All tests must test real funotinality. no mocks or stubs ever. 
+
+Before creating a test, check existin test properly - check carefully (no grep search, open each test file and check them all to make sure u dont duplicate tests and do not overlaping tests. keep it concise and organized)
+
 after making changes make sure the file compiles and all clippy warnings are fixed.
 
 run cargo clippy -p runar_node --all-targets --all-features -- -D warnings
@@ -88,6 +91,58 @@ Always add timeout to test commands to make sure it does not run foerever incase
 - **Read-then-write races**: Use DashMap's atomic operations
 - **Excessive cloning**: Use references and Arc where possible
 - **Lock ordering**: Avoid nested locks and consider lock-free alternatives
+
+## Logging best practices
+You're absolutely right. Let me write down the logging best practices based on your feedback and industry standards:
+
+## Logging Best Practices
+
+### **Log Level Usage**
+- **TRACE**: Step-by-step execution flow, detailed debugging information, function entry/exit, parameter values
+- **DEBUG**: Key decision points, important state changes (1-2 per function maximum)
+- **INFO**: Important business events, successful operations, milestones
+- **WARN**: Recoverable issues, deprecated usage, potential problems
+- **ERROR**: Failures, exceptions, unrecoverable issues
+
+### **Log Message Structure**
+- **Single Line Per Event**: Never split one logical event across multiple log lines
+- **Combine Related Information**: Put all relevant context in one log statement
+- **Use Structured Formatting**: Include all relevant parameters in one message
+
+### **Examples**
+
+**❌ BAD (Multiple lines for one event):**
+```rust
+log::trace!("FFI enroll - enrollment request parsed successfully");
+log::debug!("FFI enroll - request network_id: {}", req.network_id);
+log::debug!("FFI enroll - request CSR size: {} bytes", req.csr_der.len());
+log::debug!("FFI enroll - request token_id: {}", req.enrollment_token.body.token_id);
+```
+
+**✅ GOOD (Single line with all context):**
+```rust
+log::trace!("FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}", 
+    req.network_id, req.csr_der.len(), req.enrollment_token.body.token_id);
+```
+
+### **Function-Level Guidelines**
+- **TRACE**: Use for step-by-step flow (most common in functions)
+- **DEBUG**: Use sparingly (1-2 per function) for key decision points
+- **INFO**: Use for important business events
+- **ERROR**: Use for failures and exceptions
+
+### **Message Content**
+- Include relevant context (IDs, sizes, addresses, etc.)
+- Use consistent formatting across the codebase
+- Make messages searchable and meaningful
+- Avoid redundant information
+
+### **Performance Considerations**
+- Use lazy evaluation for expensive operations
+- Don't log in tight loops unless necessary
+- Use appropriate log levels to control verbosity
+
+This approach ensures logs are useful for debugging while maintaining performance and readability.
 
 ## 📊 **Success Metrics**
 - ✅ All tests pass with timeout

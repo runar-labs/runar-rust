@@ -27,7 +27,7 @@ Mobile simulator
 
 ```rust
 use runar_test_utils::MobileSimulator;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 
 let logger = Arc::new(Logger::new_root(Component::System, "sim"));
