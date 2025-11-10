@@ -1663,7 +1663,7 @@ impl QuicTransport {
             }
         } else {
             return Err(NetworkError::ConfigurationError(
-                "No root certificates configured for mTLS".to_string(),
+                "No root certificates configured for Quick Transport".to_string(),
             ));
         }
 

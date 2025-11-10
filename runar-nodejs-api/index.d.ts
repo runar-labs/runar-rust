@@ -231,31 +231,34 @@ export declare class Keys {
 }
 
 export declare class Transport {
+  /**
+   * Create new Transport with QuicTransport backend
+   * Following FFI pattern exactly - bridge callbacks to polling channels
+   */
   constructor(keys: Keys, options: TransportOptions)
-  onRequest(callback: (arg?: unknown) => unknown): void
-  onEvent(callback: (arg?: unknown) => unknown): void
-  onPeerConnected(callback: (arg?: unknown) => unknown): void
-  onPeerDisconnected(callback: (arg?: unknown) => unknown): void
-  removeRequestCallback(): void
-  pollEvent(): Promise<Uint8Array | null>
-  removeEventCallback(): void
-  removePeerConnectedCallback(): void
-  removePeerDisconnectedCallback(): void
-  setCallbackTimeout(timeoutMs: number): void
-  getCallbackTimeout(): number
-  completeRequest(requestId: string, responsePayload: Uint8Array, profilePublicKeys: Array<Uint8Array>): Promise<void>
+  /** Start the transport */
   start(): Promise<void>
+  /** Stop the transport */
   stop(): Promise<void>
-  connectPeer(peerInfoCbor: Uint8Array): Promise<void>
+  /**
+   * Poll for events (internal - called by TypeScript wrapper)
+   * Returns CBOR-encoded event or null
+   */
+  pollEvent(): Promise<Buffer | null>
+  /** Complete a pending request (internal - called by TypeScript wrapper) */
+  completeRequest(requestId: string, payload: Buffer, profilePublicKeys: Array<Buffer>): Promise<void>
+  /** Send a request and wait for response */
+  request(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey: Buffer | undefined | null, profilePublicKeys: Array<Buffer>): Promise<Buffer>
+  /** Publish an event */
+  publish(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null): Promise<void>
+  /** Connect to a peer */
+  connectPeer(peerInfoCbor: Buffer): Promise<void>
+  /** Check if connected to a peer */
   isConnected(peerId: string): Promise<boolean>
-  isConnectedToPublicKey(peerPublicKey: Uint8Array): Promise<boolean>
-  request(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, networkPublicKey?: Uint8Array | undefined | null, profilePublicKeys?: Array<Uint8Array> | undefined | null): Promise<Uint8Array>
-  publish(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, networkPublicKey?: Uint8Array | undefined | null): Promise<void>
-  updatePeers(nodeInfoCbor: Uint8Array): Promise<void>
-  getLocalAddr(): Promise<string>
-  requestFfi(requestParamsCbor: Uint8Array): Promise<void>
-  publishFfi(publishParamsCbor: Uint8Array): Promise<void>
-  completeRequestFfi(completeParamsCbor: Uint8Array): Promise<void>
+  /** Get local address */
+  getLocalAddr(): string
+  /** Update local node info - stores locally and notifies peers */
+  updateLocalNodeInfo(nodeInfoCbor: Buffer): Promise<void>
 }
 
 /** Utility functions for common operations */
@@ -267,6 +270,40 @@ export declare class Utils {
 export interface DeviceKeystoreCaps {
   version: number
   flags: number
+}
+
+export interface EventEnvelope {
+  path: string
+  correlationId: string
+  payload: Uint8Array
+  sourceNodeId: string
+  destinationNodeId: string
+  profilePublicKeys: Array<Uint8Array>
+  networkPublicKey?: Uint8Array
+}
+
+export interface PeerConnectedEnvelope {
+  peerId: string
+  nodePublicKey: Uint8Array
+  networkIds: Array<string>
+  addresses: Array<string>
+  version: number
+  nodeMetadata: string
+}
+
+export interface PeerDisconnectedEnvelope {
+  peerId: string
+}
+
+export interface RequestEnvelope {
+  requestId: string
+  path: string
+  correlationId: string
+  payload: Uint8Array
+  sourceNodeId: string
+  destinationNodeId: string
+  profilePublicKeys: Array<Uint8Array>
+  networkPublicKey?: Uint8Array
 }
 
 /** Set node ID on root logger (following FFI pattern exactly) */
