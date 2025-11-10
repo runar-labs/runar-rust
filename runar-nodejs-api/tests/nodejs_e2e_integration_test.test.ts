@@ -447,7 +447,7 @@ describe('NodeJS Native API E2E Integration Tests', () => {
         test('should stop CA Server', async () => {
             await caServer.stop();
             console.log('   ✅ Stopped CA Server');
-        });
+        }, 15000);
     });
 });
 

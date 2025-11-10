@@ -20,13 +20,13 @@ describe('NodeJS FFI Transport Test', () => {
     // Create keys_a (node A)
     const keysA = new Keys();
     keysA.initAsNode();
-    keysA.generateKeys(); // Generate keys before using
+    await keysA.generateKeys(); // Generate keys before using
     console.log('   ✅ Keys A created and initialized as node');
 
     // Create keys_b (node B) 
     const keysB = new Keys();
     keysB.initAsNode();
-    keysB.generateKeys(); // Generate keys before using
+    await keysB.generateKeys(); // Generate keys before using
     console.log('   ✅ Keys B created and initialized as node');
 
     // Set node info for B (following FFI pattern exactly)
@@ -78,14 +78,12 @@ describe('NodeJS FFI Transport Test', () => {
 
     // Create transport options (following FFI pattern exactly - NO root_certificates in options)
     const transportOptions = {
-      bind_addr: '127.0.0.1:0', // Let system assign port
-      max_message_size: 65536
+      bindAddr: '127.0.0.1:0', // Let system assign port
     };
-    const optionsBuf = new Uint8Array(encode(transportOptions));
     console.log('   ✅ Transport options created');
 
-    // Create transport A (following FFI pattern exactly)
-    const transportA = new Transport(keysA, optionsBuf);
+    // Create transport A (TransportOptions struct, not CBOR)
+    const transportA = new Transport(keysA, transportOptions);
     await transportA.start();
     console.log('   ✅ Transport A started');
 
@@ -93,8 +91,8 @@ describe('NodeJS FFI Transport Test', () => {
     const localAddrA = await transportA.getLocalAddr();
     console.log(`   📍 Transport A local address: ${localAddrA}`);
 
-    // Create transport B (following FFI pattern exactly)
-    const transportB = new Transport(keysB, optionsBuf);
+    // Create transport B (TransportOptions struct, not CBOR)
+    const transportB = new Transport(keysB, transportOptions);
     await transportB.start();
     console.log('   ✅ Transport B started');
 
@@ -118,78 +116,55 @@ describe('NodeJS FFI Transport Test', () => {
     const peerId = Utils.compactId(publicKeyA);
     console.log(`   🆔 Peer ID: ${peerId}`);
 
-    // Create request parameters (following FFI pattern exactly)
-    const requestParams = {
-      path: '/echo',
-      correlation_id: 'c1',
-      payload: Array.from(Buffer.from('hello')),
-      dest_peer_id: peerId,
-      network_public_key: null,
-      profile_public_keys: []
-    };
-    const requestParamsCbor = new Uint8Array(encode(requestParams));
+    // Create request parameters (use native Transport.request method)
+    const requestPath = '/echo';
+    const correlationId = 'c1';
+    const requestPayload = Buffer.from('hello');
+    const networkPublicKey = null;
+    const profilePublicKeys: Buffer[] = [];
     console.log('   ✅ Request parameters created');
 
-    // Send request from B to A (following FFI pattern exactly)
-    await transportB.requestFfi(requestParamsCbor);
-    console.log('   ✅ Request sent from B to A');
+    // Send request from B to A (async - response handling via polling)
+    const requestPromise = transportB.request(requestPath, correlationId, requestPayload, peerId, networkPublicKey, profilePublicKeys);
+    console.log('   ✅ Request initiated from B to A');
 
-    // Poll events on A to receive request (following FFI pattern exactly)
+    // Poll for the request on A
     let requestId: string | null = null;
     let requestReceived = false;
+    let receivedPayload: Buffer | null = null;
     
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 100 && !requestReceived; i++) {
       const event = await transportA.pollEvent();
-      console.log(`   🔍 Poll ${i}: event length = ${event.length}`);
-      if (event && event.length > 0) {
+      if (event) {
         const eventData = decode(event);
-        console.log(`   📨 Event received on A: ${JSON.stringify(eventData)}`);
+        console.log(`   📨 Event received on A: type=${eventData.type}`);
         
-            if (eventData.type === 'RequestReceived') {
-              requestId = eventData.request_id; // Extract request ID from request_id (following FFI pattern exactly)
-              requestReceived = true;
-              console.log(`   ✅ Request received on A with ID: ${requestId}`);
-              break;
-            }
+        if (eventData.type === 'RequestReceived') {
+          requestId = eventData.request_id;
+          receivedPayload = Buffer.from(eventData.payload);
+          requestReceived = true;
+          console.log(`   ✅ Request received on A with ID: ${requestId}, payload: ${receivedPayload.toString()}`);
+        }
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+      if (!requestReceived) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
     }
     
     expect(requestReceived).toBe(true);
     expect(requestId).toBeTruthy();
+    expect(receivedPayload?.toString()).toBe('hello');
 
-    // Create complete request parameters (following FFI pattern exactly)
-    const completeParams = {
-      request_id: requestId!,
-      response_payload: Array.from(Buffer.from('world')),
-      profile_public_keys: []
-    };
-    const completeParamsCbor = new Uint8Array(encode(completeParams));
-    console.log('   ✅ Complete request parameters created');
-
-    // Complete request on A (following FFI pattern exactly)
-    await transportA.completeRequestFfi(completeParamsCbor);
+    // Complete the request on A
+    await transportA.completeRequest(requestId!, Buffer.from('world'), []);
     console.log('   ✅ Request completed on A');
 
-    // Poll events on B to receive response (following FFI pattern exactly)
-    let responseReceived = false;
-    
-    for (let i = 0; i < 50; i++) {
-      const event = await transportB.pollEvent();
-      if (event && event.length > 0) {
-        const eventData = decode(event);
-        console.log(`   📨 Event received on B: ${JSON.stringify(eventData)}`);
-        
-        if (eventData.type === 'ResponseReceived') {
-          responseReceived = true;
-          console.log('   ✅ Response received on B');
-          break;
-        }
-      }
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    
-    expect(responseReceived).toBe(true);
+    // Wait for the response on B (request() method waits for response)
+    const response = await requestPromise;
+    expect(response).toBeDefined();
+    expect(Buffer.from(response).toString()).toBe('world');
+    console.log('   ✅ Response received on B');
+    expect(true).toBe(true);
 
     // Test publish/subscribe flow (following FFI pattern exactly)
     console.log('   📡 Testing publish/subscribe flow...');

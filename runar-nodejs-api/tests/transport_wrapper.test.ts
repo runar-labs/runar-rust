@@ -271,7 +271,9 @@ describe('Transport Wrapper (FFI Pattern)', () => {
       transportA = new Transport(keysA, options);
       
       // Stop without start should not throw
-      await expect(transportA.stop()).resolves.not.toThrow();
+      await transportA.stop();
+      // If we get here without throwing, the test passes
+      expect(true).toBe(true);
     }, 10000);
   });
 

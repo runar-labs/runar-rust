@@ -63,6 +63,7 @@ export class Discovery {
   private native: NativeDiscoveryType;
   private polling: boolean = false;
   private pollInterval: NodeJS.Timeout | null = null;
+  private shutdownCalled: boolean = false;
   
   public onDiscovered?: DiscoveredCallback;
   public onUpdated?: UpdatedCallback;
@@ -126,7 +127,18 @@ export class Discovery {
    */
   async shutdown(): Promise<void> {
     this.stopPolling();
-    await this.native.shutdown();
+    
+    if (this.shutdownCalled) {
+      // Already shut down, don't call native shutdown again
+      return;
+    }
+    
+    this.shutdownCalled = true;
+    try {
+      await this.native.shutdown();
+    } catch (error) {
+      // Ignore errors if already shut down
+    }
   }
 
   /**

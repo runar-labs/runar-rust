@@ -17,7 +17,7 @@ describe('NodeJS FFI Transport Simple Test', () => {
     // Create keys
     const keys = new Keys();
     keys.initAsNode();
-    keys.generateKeys(); // Generate keys before using
+    await keys.generateKeys(); // Generate keys before using
     console.log('   ✅ Keys created and initialized as node');
 
     // Set node info
@@ -56,17 +56,14 @@ describe('NodeJS FFI Transport Simple Test', () => {
     const rootCaCert = rootCa.getCertificate();
     const issuingCaCert = issuingCa.getCertificate();
     
-    // Create transport options
+    // Create transport options (TransportOptions struct, not CBOR)
     const transportOptions = {
-      bind_addr: '127.0.0.1:0', // Let system assign port
-      max_message_size: 65536,
-      root_certificates: [Array.from(rootCaCert), Array.from(issuingCaCert)]
+      bindAddr: '127.0.0.1:0', // Let system assign port
     };
-    const optionsBuf = new Uint8Array(encode(transportOptions));
     console.log('   ✅ Transport options created');
 
     // Create transport
-    const transport = new Transport(keys, optionsBuf);
+    const transport = new Transport(keys, transportOptions);
     console.log('   ✅ Transport created');
 
     // Start transport
@@ -77,18 +74,18 @@ describe('NodeJS FFI Transport Simple Test', () => {
     const localAddr = await transport.getLocalAddr();
     console.log(`   📍 Transport local address: ${localAddr}`);
 
-    // Test FFI-compatible methods exist
+    // Test native Transport methods exist
     expect(typeof transport.getLocalAddr).toBe('function');
     expect(typeof transport.pollEvent).toBe('function');
-    expect(typeof transport.requestFfi).toBe('function');
-    expect(typeof transport.publishFfi).toBe('function');
-    expect(typeof transport.completeRequestFfi).toBe('function');
-    console.log('   ✅ FFI-compatible methods verified');
+    expect(typeof transport.request).toBe('function');
+    expect(typeof transport.publish).toBe('function');
+    expect(typeof transport.completeRequest).toBe('function');
+    console.log('   ✅ Native Transport methods verified');
 
-    // Test poll_event returns empty array (as expected for now)
+    // Test poll_event returns null when no events (as expected)
     const event = await transport.pollEvent();
-    expect(event.length).toBe(0);
-    console.log('   ✅ Poll event returns empty array as expected');
+    expect(event).toBeNull();
+    console.log('   ✅ Poll event returns null as expected');
 
     // Stop transport
     await transport.stop();

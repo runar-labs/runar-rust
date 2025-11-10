@@ -2322,16 +2322,11 @@ impl CaServer {
 
     #[napi]
     pub async fn stop(&self) -> Result<()> {
-        let ca_server = self.inner.clone();
-        RT.spawn(async move {
-            let mut ca_server = ca_server.lock().await;
-            ca_server
-                .stop()
-                .await
-                .map_err(|e| Error::from_reason(format!("Failed to stop CA Server: {e}")))
-        })
-        .await
-        .map_err(|e| Error::from_reason(format!("Failed to stop CA Server: {e}")))?
+        let mut ca_server = self.inner.lock().await;
+        ca_server
+            .stop()
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to stop CA Server: {e}")))
     }
 
     #[napi]

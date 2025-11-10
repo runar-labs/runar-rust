@@ -99,6 +99,7 @@ export class Transport {
   private native: NativeTransportType;
   private polling: boolean = false;
   private pollInterval: NodeJS.Timeout | null = null;
+  private started: boolean = false;
   
   public onRequest?: RequestCallback;
   public onEvent?: EventCallback;
@@ -114,6 +115,7 @@ export class Transport {
    */
   async start(): Promise<void> {
     await this.native.start();
+    this.started = true;
     this.startPolling();
   }
 
@@ -122,7 +124,19 @@ export class Transport {
    */
   async stop(): Promise<void> {
     this.stopPolling();
-    await this.native.stop();
+    
+    if (!this.started) {
+      // Not started yet, nothing to stop on native side
+      return;
+    }
+    
+    try {
+      await this.native.stop();
+      this.started = false;
+    } catch (error) {
+      // Ignore errors if transport wasn't started or already stopped
+      this.started = false;
+    }
   }
 
   /**

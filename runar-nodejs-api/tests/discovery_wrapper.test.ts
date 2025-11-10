@@ -208,7 +208,9 @@ describe('Discovery Wrapper (FFI Pattern)', () => {
       await discoveryA.shutdown();
       
       // Subsequent shutdown should not throw
-      await expect(discoveryA.shutdown()).resolves.not.toThrow();
+      await discoveryA.shutdown();
+      // If we get here without throwing, the test passes
+      expect(true).toBe(true);
     }, 15000);
   });
 
