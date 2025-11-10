@@ -46,6 +46,18 @@ jobs:
       - name: Build runar_ffi (generate header)
         run: cargo build -p runar_ffi --all-targets --features linux-keystore --verbose
 
+      - name: Clean up Rust build artifacts to free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          # Clean all Rust build artifacts except cargo registry
+          cargo clean
+          # Also clean cargo cache for this build
+          rm -rf ~/.cargo/registry/cache
+          rm -rf ~/.cargo/git/checkouts
+          echo "Disk space after cleanup:"
+          df -h
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
