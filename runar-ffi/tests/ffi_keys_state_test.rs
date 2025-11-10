@@ -1,8 +1,6 @@
 #![cfg(test)]
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-use libc::c_char;
-#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use runar_ffi::*;
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use serde::Deserialize;
@@ -192,7 +190,6 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             0
         );
 
-        let mut state = 0i32;
         // Note: rn_keys_mobile_get_keystore_state removed - state management is now internal
         // State management is handled internally by the MobileKeyManager
 
@@ -376,7 +373,6 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             rn_keys_set_persistence_dir(keys2, dir.as_ptr(), &mut err as *mut _),
             0
         );
-        let mut state2 = 0i32;
         // Note: rn_keys_mobile_get_keystore_state removed - state management is now internal
         // State management is handled internally by the MobileKeyManager
 

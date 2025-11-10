@@ -237,7 +237,6 @@ pub fn to_napi_error_with_code<E: ErrorCodeMapping + std::fmt::Display>(error: E
     create_napi_error_with_code(code, &message)
 }
 
-use hex;
 use once_cell::sync::OnceCell;
 use runar_keys::{
     CANode, CertificateValidator, CsrEnrollRequest, EnrollmentToken as KeysEnrollmentToken,
@@ -2658,11 +2657,8 @@ impl CaCreator {
 
     #[napi]
     pub fn get_ea_public_key(ea_private_key_der: Uint8Array) -> Result<Uint8Array> {
-        let ea_key =
-            runar_keys::certificate::EcdsaKeyPair::from_pkcs8_der(&ea_private_key_der.to_vec())
-                .map_err(|e| {
-                    Error::from_reason(format!("Failed to create EA key from DER: {e}"))
-                })?;
+        let ea_key = runar_keys::certificate::EcdsaKeyPair::from_pkcs8_der(&ea_private_key_der)
+            .map_err(|e| Error::from_reason(format!("Failed to create EA key from DER: {e}")))?;
 
         // Return raw public key bytes (not DER-encoded) to match FFI behavior
         let public_key_bytes = ea_key.public_key().as_bytes().to_vec();
@@ -3588,7 +3584,7 @@ impl Certificate {
         // Convert to hex string
         let ski_hex = ski_bytes
             .iter()
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<Vec<_>>()
             .join("");
         Ok(ski_hex)
