@@ -180,7 +180,7 @@ describe('Lifecycle Callbacks Aligned Test', () => {
       await new Promise(resolve => setTimeout(resolve, 150));
 
       await transport1.connectPeer(peerInfo);
-      await new Promise(rewift/tree/swift_ffi_2/swift-ffisolve => setTimeout(resolve, 400));
+      await new Promise(resolve => setTimeout(resolve, 400));
 
       // Check that t1 sees second on_up for t2 after restart - mirroring Rust assertion
       const node1EventsAfterReconnect = [...node1LifecycleEvents];

@@ -235,14 +235,14 @@ describe('Transport Wrapper (FFI Pattern)', () => {
       await transportA.start();
       
       const nodeInfo = {
-        node_public_key: new Uint8Array(0),
+        node_public_key: [],
         network_ids: ['test', 'updated'],
         addresses: [],
         node_metadata: { services: [], subscriptions: [] },
         version: 1
       };
       
-      await transportA.updateLocalNodeInfo(encode(nodeInfo));
+      await transportA.updateLocalNodeInfo(Buffer.from(encode(nodeInfo)));
       
       await transportA.stop();
     }, 10000);
