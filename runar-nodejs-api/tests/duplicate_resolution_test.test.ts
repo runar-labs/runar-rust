@@ -1,12 +1,12 @@
 import { encode, decode } from 'cbor-x';
-import {
+const {
   setLogLevel,
   setLoggerNodeId,
   Keys,
-  Transport,
-  TransportOptions,
   Utils
-} from '../index';
+} = require('../index');
+import { Transport } from '../src/transport_wrapper';
+import type { TransportOptions } from '../index.d';
 
 describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () => {
   test('duplicate_resolution_simultaneous_dial', async () => {
@@ -49,6 +49,25 @@ describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () =
     console.log(`   ✅ Node 1 ID: ${node1Id}`);
     console.log(`   ✅ Node 2 ID: ${node2Id}`);
 
+    // Set local node info (required before creating transports)
+    const nodeInfo1 = encode({
+      node_public_key: Array.from(node1PublicKey),
+      network_ids: [],
+      addresses: [],
+      node_metadata: { services: [], subscriptions: [] },
+      version: 0
+    });
+    node1Keys.setLocalNodeInfo(Buffer.from(nodeInfo1));
+
+    const nodeInfo2 = encode({
+      node_public_key: Array.from(node2PublicKey),
+      network_ids: [],
+      addresses: [],
+      node_metadata: { services: [], subscriptions: [] },
+      version: 0
+    });
+    node2Keys.setLocalNodeInfo(Buffer.from(nodeInfo2));
+
     // ==================================================
     // STEP 2: Create Lifecycle Event Tracking
     // ==================================================
@@ -72,29 +91,24 @@ describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () =
     const transport1 = new Transport(node1Keys, transportOptions);
 
     // Set up request handler
-    transport1.onRequest(async (request) => {
+    transport1.onRequest = async (_requestId, _path, _correlationId, payload) => {
       return {
-        payload: request.payload, // Echo back
-        correlationId: request.correlationId
+        payload, // Echo back
+        profilePublicKeys: []
       };
-    });
-
-    // Set up event handler
-    transport1.onEvent((event) => {
-      // No-op
-    });
+    };
 
     // Set up peer connected callback for Transport 1
-    transport1.onPeerConnected((peerId, nodeInfo) => {
+    transport1.onPeerConnected = (peerId) => {
       console.log(`   🔗 [Transport1] Peer connected: ${peerId}`);
       events1.push({ peer: peerId, connected: true });
-    });
+    };
 
     // Set up peer disconnected callback for Transport 1
-    transport1.onPeerDisconnected((peerId) => {
+    transport1.onPeerDisconnected = (peerId) => {
       console.log(`   🔌 [Transport1] Peer disconnected: ${peerId}`);
       events1.push({ peer: peerId, connected: false });
-    });
+    };
 
     console.log('   ✅ Transport 1 created');
 
@@ -106,29 +120,24 @@ describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () =
     const transport2 = new Transport(node2Keys, transportOptions);
 
     // Set up request handler
-    transport2.onRequest(async (request) => {
+    transport2.onRequest = async (_requestId, _path, _correlationId, payload) => {
       return {
-        payload: request.payload, // Echo back
-        correlationId: request.correlationId
+        payload, // Echo back
+        profilePublicKeys: []
       };
-    });
-
-    // Set up event handler
-    transport2.onEvent((event) => {
-      // No-op
-    });
+    };
 
     // Set up peer connected callback for Transport 2
-    transport2.onPeerConnected((peerId, nodeInfo) => {
+    transport2.onPeerConnected = (peerId) => {
       console.log(`   🔗 [Transport2] Peer connected: ${peerId}`);
       events2.push({ peer: peerId, connected: true });
-    });
+    };
 
     // Set up peer disconnected callback for Transport 2
-    transport2.onPeerDisconnected((peerId) => {
+    transport2.onPeerDisconnected = (peerId) => {
       console.log(`   🔌 [Transport2] Peer disconnected: ${peerId}`);
       events2.push({ peer: peerId, connected: false });
-    });
+    };
 
     console.log('   ✅ Transport 2 created');
 
@@ -150,8 +159,8 @@ describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () =
     console.log('   🔄 Testing repeated simultaneous dial rounds...');
 
     // Get actual addresses of both transports
-    const transport1Addr = await transport1.getLocalAddr();
-    const transport2Addr = await transport2.getLocalAddr();
+    const transport1Addr = transport1.getLocalAddr();
+    const transport2Addr = transport2.getLocalAddr();
     console.log(`   ✅ Transport 1 address: ${transport1Addr}`);
     console.log(`   ✅ Transport 2 address: ${transport2Addr}`);
 
@@ -173,8 +182,8 @@ describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () =
       
       // Simultaneous dial
       const [result1, result2] = await Promise.allSettled([
-        transport1.connectPeer(peerInfo2Cbor),
-        transport2.connectPeer(peerInfo1Cbor)
+        transport1.connectPeer(Buffer.from(peerInfo2Cbor)),
+        transport2.connectPeer(Buffer.from(peerInfo1Cbor))
       ]);
 
       // Log results
@@ -222,22 +231,26 @@ describe('Duplicate Resolution Test (Aligned with quic_transport_test.rs)', () =
     console.log('   📤 Testing bidirectional requests...');
 
     // Request from Transport 1 to Transport 2
-    const requestPayload1 = new Uint8Array(Buffer.from("test from t1"));
+    const requestPayload1 = Buffer.from("test from t1");
     const response1 = await transport1.request(
       "test:echo/req",
       "corr1",
       requestPayload1,
-      node2Id
+      node2Id,
+      undefined,
+      []
     );
     console.log(`   ✅ Request 1 response: ${Buffer.from(response1).toString()}`);
 
     // Request from Transport 2 to Transport 1
-    const requestPayload2 = new Uint8Array(Buffer.from("test from t2"));
+    const requestPayload2 = Buffer.from("test from t2");
     const response2 = await transport2.request(
       "test:echo/req",
       "corr2",
       requestPayload2,
-      node1Id
+      node1Id,
+      undefined,
+      []
     );
     console.log(`   ✅ Request 2 response: ${Buffer.from(response2).toString()}`);
 

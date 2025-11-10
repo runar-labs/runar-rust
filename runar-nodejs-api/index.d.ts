@@ -105,12 +105,33 @@ export declare class Certificate {
 
 export declare class Discovery {
   constructor(keys: Keys, optionsCbor: Uint8Array)
+  /** Initialize the discovery mechanism */
   init(optionsCbor: Uint8Array): Promise<void>
-  bindEventsToTransport(transport: Transport): Promise<void>
+  /** Start announcing this node's presence */
   startAnnouncing(): Promise<void>
+  /** Stop announcing this node's presence */
   stopAnnouncing(): Promise<void>
+  /** Shutdown the discovery mechanism */
   shutdown(): Promise<void>
+  /** Update local peer information */
   updateLocalPeerInfo(peerInfoCbor: Uint8Array): Promise<void>
+  /**
+   * Poll for discovered peers (internal - called by TypeScript wrapper)
+   * Returns CBOR-encoded PeerInfo or null
+   */
+  pollDiscovered(): Promise<Buffer | null>
+  /**
+   * Poll for updated peers (internal - called by TypeScript wrapper)
+   * Returns CBOR-encoded PeerInfo or null
+   */
+  pollUpdated(): Promise<Buffer | null>
+  /**
+   * Poll for lost peers (internal - called by TypeScript wrapper)
+   * Returns peer ID string or null
+   */
+  pollLost(): Promise<string | null>
+  /** Bind discovery events to transport (auto-connect discovered peers) */
+  bindEventsToTransport(transport: Transport): Promise<void>
 }
 
 export declare class EnrollmentToken {

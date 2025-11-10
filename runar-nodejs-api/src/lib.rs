@@ -1854,11 +1854,20 @@ impl Transport {
 
 #[napi]
 pub struct Discovery {
-    inner: Arc<Mutex<DiscoveryInner>>,
+    state: Arc<DiscoveryState>,
 }
 
-struct DiscoveryInner {
+struct DiscoveryState {
     discovery: Arc<runar_transporter::discovery::MulticastDiscovery>,
+    #[allow(dead_code)] // Used by listener callback stored during subscribe
+    discovered_tx: mpsc::UnboundedSender<Vec<u8>>,
+    discovered_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    #[allow(dead_code)] // Used by listener callback stored during subscribe
+    updated_tx: mpsc::UnboundedSender<Vec<u8>>,
+    updated_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    #[allow(dead_code)] // Used by listener callback stored during subscribe
+    lost_tx: mpsc::UnboundedSender<String>,
+    lost_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>>,
 }
 
 fn parse_discovery_options(cbor_bytes: &[u8]) -> DiscoveryOptions {
@@ -1915,9 +1924,12 @@ fn parse_discovery_options(cbor_bytes: &[u8]) -> DiscoveryOptions {
 impl Discovery {
     #[napi(constructor)]
     pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
-        let inner = keys.inner.lock().unwrap();
+        let inner = keys.inner.lock()
+            .map_err(|_| Error::from_reason("Failed to acquire keys lock"))?;
         let node_pk = if let Some(n) = inner.node_key_manager.as_ref() {
-            n.read().unwrap().get_node_public_key()
+            n.read()
+                .map_err(|_| Error::from_reason("Failed to acquire node manager lock"))?
+                .get_node_public_key()
         } else {
             return Err(Error::from_reason("Node not init"));
         };
@@ -1948,81 +1960,164 @@ impl Discovery {
                 Arc::clone(&logger),
             ))
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Discovery {
-            inner: Arc::new(Mutex::new(DiscoveryInner {
-                discovery: Arc::new(disc),
-            })),
-        })
+        
+        // Create channels for polling (exactly like FFI pattern)
+        let (discovered_tx, discovered_rx) = mpsc::unbounded_channel();
+        let (updated_tx, updated_rx) = mpsc::unbounded_channel();
+        let (lost_tx, lost_rx) = mpsc::unbounded_channel();
+        
+        // Create discovery listener to feed events into channels
+        let disc_tx = discovered_tx.clone();
+        let upd_tx = updated_tx.clone();
+        let lst_tx = lost_tx.clone();
+        
+        let discovery = Arc::new(disc);
+        let listener_discovery = Arc::clone(&discovery);
+        
+        // Subscribe listener asynchronously
+        RT.spawn(async move {
+            let listener: runar_transporter::discovery::DiscoveryListener =
+                Arc::new(move |ev: runar_transporter::discovery::DiscoveryEvent| {
+                    let disc_tx = disc_tx.clone();
+                    let upd_tx = upd_tx.clone();
+                    let lst_tx = lst_tx.clone();
+                    Box::pin(async move {
+                        match ev {
+                            runar_transporter::discovery::DiscoveryEvent::Discovered(peer) => {
+                                if let Ok(cbor_bytes) = serde_cbor::to_vec(&peer) {
+                                    let _ = disc_tx.send(cbor_bytes);
+                                }
+                            }
+                            runar_transporter::discovery::DiscoveryEvent::Updated(peer) => {
+                                if let Ok(cbor_bytes) = serde_cbor::to_vec(&peer) {
+                                    let _ = upd_tx.send(cbor_bytes);
+                                }
+                            }
+                            runar_transporter::discovery::DiscoveryEvent::Lost(peer_id) => {
+                                let _ = lst_tx.send(peer_id);
+                            }
+                        }
+                    })
+                });
+            let _ = listener_discovery.subscribe(listener).await;
+        });
+        
+        let state = Arc::new(DiscoveryState {
+            discovery,
+            discovered_tx,
+            discovered_rx: Arc::new(tokio::sync::Mutex::new(discovered_rx)),
+            updated_tx,
+            updated_rx: Arc::new(tokio::sync::Mutex::new(updated_rx)),
+            lost_tx,
+            lost_rx: Arc::new(tokio::sync::Mutex::new(lost_rx)),
+        });
+        
+        Ok(Discovery { state })
     }
 
+    /// Initialize the discovery mechanism
     #[napi]
     pub async fn init(&self, options_cbor: Uint8Array) -> Result<()> {
         let opts = parse_discovery_options(options_cbor.as_ref());
-        let d = { self.inner.lock().unwrap().discovery.clone() };
-        d.init(opts)
+        self.state.discovery.init(opts)
             .await
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Start announcing this node's presence
     #[napi]
-    pub async fn bind_events_to_transport(&self, _transport: &Transport) -> Result<()> {
-        let _d = { self.inner.lock().unwrap().discovery.clone() };
-        // TODO: Update once Transport is fully implemented
-        return Err(Error::from_reason("Transport binding not yet implemented"));
+    pub async fn start_announcing(&self) -> Result<()> {
+        self.state.discovery.start_announcing()
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Stop announcing this node's presence
+    #[napi]
+    pub async fn stop_announcing(&self) -> Result<()> {
+        self.state.discovery.stop_announcing()
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Shutdown the discovery mechanism
+    #[napi]
+    pub async fn shutdown(&self) -> Result<()> {
+        self.state.discovery.shutdown()
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Update local peer information
+    #[napi]
+    pub async fn update_local_peer_info(&self, peer_info_cbor: Uint8Array) -> Result<()> {
+        let peer: runar_transporter::discovery::multicast_discovery::PeerInfo =
+            cbor::from_slice(peer_info_cbor.as_ref())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+        self.state.discovery.update_local_peer_info(peer)
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+    
+    /// Poll for discovered peers (internal - called by TypeScript wrapper)
+    /// Returns CBOR-encoded PeerInfo or null
+    #[napi]
+    pub async fn poll_discovered(&self) -> Result<Option<Buffer>> {
+        let mut rx = self.state.discovered_rx.lock().await;
         
-        /* TODO: Uncomment and fix once Transport is fully implemented
-        let t = { transport.state.transport.clone() };
+        match rx.try_recv() {
+            Ok(buf) => Ok(Some(buf.into())),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(_) => Err(Error::from_reason("Discovered channel closed")),
+        }
+    }
+    
+    /// Poll for updated peers (internal - called by TypeScript wrapper)
+    /// Returns CBOR-encoded PeerInfo or null
+    #[napi]
+    pub async fn poll_updated(&self) -> Result<Option<Buffer>> {
+        let mut rx = self.state.updated_rx.lock().await;
+        
+        match rx.try_recv() {
+            Ok(buf) => Ok(Some(buf.into())),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(_) => Err(Error::from_reason("Updated channel closed")),
+        }
+    }
+    
+    /// Poll for lost peers (internal - called by TypeScript wrapper)
+    /// Returns peer ID string or null
+    #[napi]
+    pub async fn poll_lost(&self) -> Result<Option<String>> {
+        let mut rx = self.state.lost_rx.lock().await;
+        
+        match rx.try_recv() {
+            Ok(peer_id) => Ok(Some(peer_id)),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(_) => Err(Error::from_reason("Lost channel closed")),
+        }
+    }
+    
+    /// Bind discovery events to transport (auto-connect discovered peers)
+    #[napi]
+    pub async fn bind_events_to_transport(&self, transport: &Transport) -> Result<()> {
+        let t = Arc::clone(&transport.state.transport);
         let listener: runar_transporter::discovery::DiscoveryListener =
-            Arc::new(move |ev: DiscoveryEvent| {
+            Arc::new(move |ev: runar_transporter::discovery::DiscoveryEvent| {
                 let t = t.clone();
                 Box::pin(async move {
                     match ev {
-                        DiscoveryEvent::Discovered(peer) | DiscoveryEvent::Updated(peer) => {
+                        runar_transporter::discovery::DiscoveryEvent::Discovered(peer) 
+                        | runar_transporter::discovery::DiscoveryEvent::Updated(peer) => {
                             let _ = NetworkTransport::connect_peer(t.clone(), peer).await;
                         }
-                        DiscoveryEvent::Lost(_id) => {
+                        runar_transporter::discovery::DiscoveryEvent::Lost(_id) => {
                             // Optional: disconnect
                         }
                     }
                 })
             });
-        d.subscribe(listener)
-            .await
-            .map_err(|e| Error::from_reason(e.to_string()))
-        */
-    }
-
-    #[napi]
-    pub async fn start_announcing(&self) -> Result<()> {
-        let d = { self.inner.lock().unwrap().discovery.clone() };
-        d.start_announcing()
-            .await
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    #[napi]
-    pub async fn stop_announcing(&self) -> Result<()> {
-        let d = { self.inner.lock().unwrap().discovery.clone() };
-        d.stop_announcing()
-            .await
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    #[napi]
-    pub async fn shutdown(&self) -> Result<()> {
-        let d = { self.inner.lock().unwrap().discovery.clone() };
-        d.shutdown()
-            .await
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    #[napi]
-    pub async fn update_local_peer_info(&self, peer_info_cbor: Uint8Array) -> Result<()> {
-        let d = { self.inner.lock().unwrap().discovery.clone() };
-        let peer: runar_transporter::discovery::multicast_discovery::PeerInfo =
-            cbor::from_slice(peer_info_cbor.as_ref())
-                .map_err(|e| Error::from_reason(e.to_string()))?;
-        d.update_local_peer_info(peer)
+        self.state.discovery.subscribe(listener)
             .await
             .map_err(|e| Error::from_reason(e.to_string()))
     }

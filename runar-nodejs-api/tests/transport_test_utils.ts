@@ -9,7 +9,7 @@ function loadAddon(): any {
   return require(local);
 }
 
-export function createCa(): { addon: any; rootCa: any; issuingCa: any; caNode: any; tmpDir: string } {
+export function createCa(): { addon: any; rootCa: any; issuingCa: any; caNode: any; tmpDir: string; eaKey: any } {
   const addon = loadAddon();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runar-nodejs-ca-'));
   
@@ -17,18 +17,15 @@ export function createCa(): { addon: any; rootCa: any; issuingCa: any; caNode: a
   const rootCa = addon.CaCreator.createRootCa('CN=Test Root CA,O=Test,C=US');
   const issuingCa = addon.CaCreator.createIssuingCa(rootCa, 'CN=Test Issuing CA,O=Test,C=US', 365, 1);
   const caNode = new addon.CaNode();
+  const eaKey = addon.CaCreator.createEaKey();
   
-  return { addon, rootCa, issuingCa, caNode, tmpDir: tmp };
+  return { addon, rootCa, issuingCa, caNode, tmpDir: tmp, eaKey };
 }
 
-export async function initCa(ca: { addon: any; rootCa: any; issuingCa: any; caNode: any }): Promise<void> {
-  // Setup CA Node with real certificates
-  const eaKey = ca.addon.CaCreator.createEaKey();
-  const eaPublicKey = ca.addon.CaCreator.getEaPublicKey(eaKey);
+export async function initCa(ca: { addon: any; rootCa: any; issuingCa: any; caNode: any; eaKey?: any }): Promise<void> {
+  // Setup CA Node with real certificates  
+  const eaPublicKey = ca.addon.CaCreator.getEaPublicKey(ca.eaKey);
   const eaPublicKeysCbor = new Uint8Array(encode([Array.from(eaPublicKey)]));
-  
-  // Store the EA key for later use
-  ca.eaKey = eaKey;
   
   await ca.caNode.setupComplete(
     'CN=Test Root CA,O=Test,C=US',
@@ -64,7 +61,7 @@ export function buildNodeInfo(keys: any, address: string, network: string): Buff
   return encode(ni);
 }
 
-export async function signAndInstallCert(ca: { addon: any; caNode: any }, node: { keys: any }): Promise<void> {
+export async function signAndInstallCert(ca: { addon: any; caNode: any; eaKey: any }, node: { keys: any }): Promise<void> {
   // Generate node keys
   node.keys.nodeGenerateKeys();
   
